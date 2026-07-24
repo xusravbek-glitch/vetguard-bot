@@ -1,0 +1,51 @@
+from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from database import get_all_products, get_all_customers
+
+def main_menu_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("➕ Келди"), KeyboardButton("➖ Сотиш")],
+            [KeyboardButton("📦 Омбор қолдиғи"), KeyboardButton("💰 Қарздорлик")],
+            [KeyboardButton("💸 Қарзни тўлаш"), KeyboardButton("⚙️ Дори созлаш")],
+            [KeyboardButton("👤 Мижозлар"), KeyboardButton("🆕 Янги дори қўшиш")],
+            [KeyboardButton("📜 Умумий тарих")],
+        ],
+        resize_keyboard=True,
+    )
+
+def payment_keyboard():
+    return ReplyKeyboardMarkup(
+        [["💵 Нақд", "💳 Насия"]], resize_keyboard=True
+    )
+
+def customer_menu_keyboard():
+    return ReplyKeyboardMarkup(
+        [["👤 Янги мижоз қўшиш", "⬅️ Орқага"]], resize_keyboard=True
+    )
+
+def back_keyboard():
+    return ReplyKeyboardMarkup(
+        [["⬅️ Орқага"]], resize_keyboard=True
+    )
+
+async def product_inline_keyboard():
+    products = await get_all_products()
+    if not products:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Дори йўқ", callback_data="no_products")]])
+    
+    buttons = []
+    for p in products:
+        buttons.append([InlineKeyboardButton(f"{p.name} ({p.quantity})", callback_data=f"prod_{p.name}")])
+    buttons.append([InlineKeyboardButton("⬅️ Орқага", callback_data="back_main")])
+    return InlineKeyboardMarkup(buttons)
+
+async def customer_inline_keyboard():
+    customers = await get_all_customers()
+    if not customers:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Мижоз йўқ", callback_data="no_customers")]])
+    
+    buttons = []
+    for c in customers:
+        buttons.append([InlineKeyboardButton(c.name, callback_data=f"cust_{c.name}")])
+    buttons.append([InlineKeyboardButton("⬅️ Орқага", callback_data="back_main")])
+    return InlineKeyboardMarkup(buttons)

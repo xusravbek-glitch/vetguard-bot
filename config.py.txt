@@ -1,0 +1,17 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
+DATABASE_URL = os.getenv("DATABASE_URL", "").replace(
+    "postgresql://", "postgresql+asyncpg://", 1
+)
+LOW_STOCK_LIMIT = 5
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 8443))
+
+# Railway webhook URL ni to'g'ri formatda olish
+if WEBHOOK_URL and not WEBHOOK_URL.endswith("/webhook"):
+    WEBHOOK_URL = WEBHOOK_URL.rstrip("/") + "/webhook"
