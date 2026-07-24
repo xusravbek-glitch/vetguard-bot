@@ -1,4 +1,4 @@
-python-telegram-bot==21.11.1
+python-telegram-bot[webhooks]==21.11.1
 SQLAlchemy==1.4.49
 asyncpg==0.30.0
 python-dotenv==1.0.0
