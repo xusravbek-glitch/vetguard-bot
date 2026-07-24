@@ -8,6 +8,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 
 import asyncpg
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy import Column, Integer, String, Float, select, update, delete
 
@@ -56,7 +57,7 @@ class SaleLog(Base):
     total = Column(Float)
     payment_type = Column(String)
 
-engine = create_async_engine(DATABASE_URL, echo=True)
+engine = create_async_engine(DATABASE_URL, echo=True, poolclass=NullPool)
 async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 async def init_db():
