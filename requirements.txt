@@ -1,5 +1,4 @@
 python-telegram-bot==20.7
 psycopg2-binary==2.9.9
-sqlalchemy==2.0.19
+sqlalchemy==1.4.49
 python-dotenv==1.0.0
-greenlet==3.0.0
