@@ -1,0 +1,527 @@
+import os
+import logging
+from datetime import datetime
+from dotenv import load_dotenv
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.utils import executor
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import Column, Integer, String, Float, select, update, delete
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8205652790:AAERJP2EC3rSXKP1NJ2aXfhmMu6eaJLRHhQ")
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "1344327136").split(',')))
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+LOW_STOCK_LIMIT = 5
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
+dp.middleware.setup(LoggingMiddleware())
+
+Base = declarative_base()
+
+class Product(Base):
+    __tablename__ = 'products'
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    quantity = Column(Integer, default=0)
+    price = Column(Float, default=0.0)
+    discount = Column(Float, default=0.0)
+
+class Customer(Base):
+    __tablename__ = 'customers'
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+
+class Debt(Base):
+    __tablename__ = 'debts'
+    id = Column(Integer, primary_key=True)
+    customer_name = Column(String, nullable=False)
+    amount = Column(Float, default=0.0)
+
+class SaleLog(Base):
+    __tablename__ = 'sale_logs'
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(String, default=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    customer = Column(String)
+    product = Column(String)
+    quantity = Column(Integer)
+    total = Column(Float)
+    payment_type = Column(String)
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+async def get_product(name):
+    async with async_session() as session:
+        result = await session.execute(select(Product).where(Product.name == name))
+        return result.scalar_one_or_none()
+
+async def get_all_products():
+    async with async_session() as session:
+        result = await session.execute(select(Product).order_by(Product.name))
+        return result.scalars().all()
+
+async def get_all_customers():
+    async with async_session() as session:
+        result = await session.execute(select(Customer).order_by(Customer.name))
+        return result.scalars().all()
+
+async def get_debt(customer_name):
+    async with async_session() as session:
+        result = await session.execute(select(Debt).where(Debt.customer_name == customer_name))
+        return result.scalar_one_or_none()
+
+async def get_all_debts():
+    async with async_session() as session:
+        result = await session.execute(select(Debt).where(Debt.amount > 0))
+        return result.scalars().all()
+
+async def log_sale(customer, product, quantity, total, payment_type):
+    async with async_session() as session:
+        sale = SaleLog(
+            customer=customer,
+            product=product,
+            quantity=quantity,
+            total=total,
+            payment_type=payment_type
+        )
+        session.add(sale)
+        await session.commit()
+
+async def get_sale_logs():
+    async with async_session() as session:
+        result = await session.execute(select(SaleLog).order_by(SaleLog.id.desc()).limit(100))
+        return result.scalars().all()
+
+def format_currency(amount):
+    return f"{amount:,.0f} сўм"
+
+async def get_inventory_text():
+    products = await get_all_products()
+    if not products:
+        return "📦 Омбор бўш."
+    lines = ["📦 **Омбор ҳолати:**\n"]
+    for p in products:
+        status = "🔴" if p.quantity <= LOW_STOCK_LIMIT else "🟢"
+        lines.append(f"{status} **{p.name}**")
+        lines.append(f"   📦 {p.quantity} дона")
+        lines.append(f"   💰 {format_currency(p.price)}")
+        lines.append(f"   🎁 {p.discount}% чегирма\n")
+    return "\n".join(lines)
+
+async def get_product_keyboard():
+    markup = InlineKeyboardMarkup(row_width=2)
+    products = await get_all_products()
+    for p in products:
+        markup.add(InlineKeyboardButton(p.name, callback_data=f"prod_{p.name}"))
+    markup.add(InlineKeyboardButton("⬅️ Орқага", callback_data="back_main"))
+    return markup
+
+async def get_customer_keyboard():
+    markup = InlineKeyboardMarkup(row_width=2)
+    customers = await get_all_customers()
+    for c in customers:
+        markup.add(InlineKeyboardButton(c.name, callback_data=f"cust_{c.name}"))
+    markup.add(InlineKeyboardButton("⬅️ Орқага", callback_data="back_main"))
+    return markup
+
+@dp.message_handler(commands=['start', 'menu'])
+async def send_welcome(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.reply("🚫 Рухсат йўқ.")
+        return
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(
+        KeyboardButton("➕ Келди"),
+        KeyboardButton("➖ Сотиш"),
+        KeyboardButton("📦 Омбор қолдиғи"),
+        KeyboardButton("💰 Қарздорлик"),
+        KeyboardButton("💸 Қарзни тўлаш"),
+        KeyboardButton("⚙️ Дори созлаш"),
+        KeyboardButton("👤 Мижозлар"),
+        KeyboardButton("🆕 Янги дори қўшиш"),
+        KeyboardButton("📜 Умумий тарих")
+    )
+    await message.reply("📦 **VETGUARD ERP v3.0 (PostgreSQL)**", reply_markup=markup, parse_mode="Markdown")
+
+# =====================
+# 1. ЯНГИ ДОРИ ҚЎШИШ
+# =====================
+@dp.message_handler(lambda m: m.text == "🆕 Янги дори қўшиш")
+async def add_new_product_start(message: types.Message):
+    await message.reply("🆕 Янги дори номини киритинг:", reply_markup=types.ReplyKeyboardRemove())
+    dp.register_next_step_handler(message, add_new_product_finish)
+
+async def add_new_product_finish(message: types.Message):
+    name = message.text.strip()
+    if not name:
+        await message.reply("❌ Ном бўш бўлмасин.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    existing = await get_product(name)
+    if existing:
+        await message.reply(f"❌ {name} аллақачон бор.", reply_markup=types.ReplyKeyboardRemove())
+        await send_welcome(message)
+        return
+    async with async_session() as session:
+        new_product = Product(name=name, quantity=0, price=0, discount=0)
+        session.add(new_product)
+        await session.commit()
+    logger.info(f"Янги дори қўшилди: {name}")
+    await message.reply(f"✅ {name} қўшилди.\nЭнди нарх ва чегирмани созланг.", reply_markup=types.ReplyKeyboardRemove())
+    await send_welcome(message)
+
+# =====================
+# 2. ДОРИ КЕЛИШИ
+# =====================
+@dp.message_handler(lambda m: m.text == "➕ Келди")
+async def incoming_start(message: types.Message):
+    keyboard = await get_product_keyboard()
+    await message.reply("Дорини танланг:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda call: call.data.startswith("prod_"))
+async def incoming_product_selected(call: types.CallbackQuery):
+    product = call.data.replace("prod_", "")
+    await call.message.reply(f"📥 {product} миқдорини киритинг:", reply_markup=types.ReplyKeyboardRemove())
+    dp.register_next_step_handler(call.message, lambda m: incoming_quantity(m, product))
+
+async def incoming_quantity(message: types.Message, product_name):
+    if not message.text.isdigit():
+        await message.reply("❌ Сон киритинг.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    quantity = int(message.text)
+    product = await get_product(product_name)
+    if not product:
+        await message.reply("❌ Дори топилмади.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    async with async_session() as session:
+        await session.execute(
+            update(Product)
+            .where(Product.name == product_name)
+            .values(quantity=Product.quantity + quantity)
+        )
+        await session.commit()
+    logger.info(f"Келди: {product_name} +{quantity}")
+    await message.reply(f"✅ {product_name} миқдори {quantity} донага ошди.", reply_markup=types.ReplyKeyboardRemove())
+    await send_welcome(message)
+
+# =====================
+# 3. СОТИШ
+# =====================
+@dp.message_handler(lambda m: m.text == "➖ Сотиш")
+async def sell_start(message: types.Message):
+    keyboard = await get_product_keyboard()
+    await message.reply("Дорини танланг:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda call: call.data.startswith("prod_"))
+async def sell_product_selected(call: types.CallbackQuery):
+    product = call.data.replace("prod_", "")
+    keyboard = await get_customer_keyboard()
+    await call.message.reply(f"👤 Мижозни танланг:", reply_markup=keyboard)
+    dp.register_next_step_handler(call.message, lambda m: sell_customer_selected(m, product))
+
+async def sell_customer_selected(message: types.Message, product_name):
+    if message.text and message.text.startswith("cust_"):
+        customer = message.text.replace("cust_", "")
+    else:
+        customer = message.text.strip()
+    customers = await get_all_customers()
+    if not any(c.name == customer for c in customers):
+        await message.reply("❌ Мижоз топилмади.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    markup = ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("💵 Нақд", "💳 Насия")
+    await message.reply("Тўлов турини танланг:", reply_markup=markup)
+    dp.register_next_step_handler(message, lambda m: sell_payment_type(m, product_name, customer))
+
+async def sell_payment_type(message: types.Message, product_name, customer):
+    payment = message.text
+    if payment not in ["💵 Нақд", "💳 Насия"]:
+        await message.reply("❌ Нотўғри танлов.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    product = await get_product(product_name)
+    if not product:
+        await message.reply("❌ Дори топилмади.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    final_price = product.price * (1 - product.discount / 100)
+    await message.reply(
+        f"💵 {product_name} нархи: {format_currency(final_price)} (чегирма {product.discount}%)\n"
+        f"Миқдорини киритинг:",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+    dp.register_next_step_handler(message, lambda m: sell_finish(m, product_name, customer, payment, final_price))
+
+async def sell_finish(message: types.Message, product_name, customer, payment_type, final_price):
+    if not message.text.isdigit():
+        await message.reply("❌ Сон киритинг.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    quantity = int(message.text)
+    if quantity <= 0:
+        await message.reply("❌ Миқдор 0 дан катта бўлиши керак.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    product = await get_product(product_name)
+    if not product or product.quantity < quantity:
+        available = product.quantity if product else 0
+        await message.reply(f"❌ Омборда {available} дона бор.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    total = int(final_price * quantity)
+    
+    async with async_session() as session:
+        await session.execute(
+            update(Product)
+            .where(Product.name == product_name)
+            .values(quantity=Product.quantity - quantity)
+        )
+        if payment_type == "💳 Насия":
+            debt = await get_debt(customer)
+            if debt:
+                await session.execute(
+                    update(Debt)
+                    .where(Debt.customer_name == customer)
+                    .values(amount=Debt.amount + total)
+                )
+            else:
+                new_debt = Debt(customer_name=customer, amount=total)
+                session.add(new_debt)
+        await log_sale(customer, product_name, quantity, total, payment_type)
+        await session.commit()
+    
+    await message.reply(
+        f"✅ Сотилди: {product_name} x{quantity}\n"
+        f"💰 {format_currency(total)}\n"
+        f"📦 Қолди: {product.quantity - quantity}",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+    if product.quantity - quantity <= LOW_STOCK_LIMIT:
+        await message.reply(
+            f"⚠️ **{product_name}** тугаяпти! {product.quantity - quantity} дона қолди.",
+            parse_mode="Markdown"
+        )
+    await send_welcome(message)
+
+# =====================
+# 4. ОМБОР ҚОЛДИҒИ
+# =====================
+@dp.message_handler(lambda m: m.text == "📦 Омбор қолдиғи")
+async def show_inventory(message: types.Message):
+    text = await get_inventory_text()
+    await message.reply(text, parse_mode="Markdown")
+
+# =====================
+# 5. ҚАРЗДОРЛИК
+# =====================
+@dp.message_handler(lambda m: m.text == "💰 Қарздорлик")
+async def show_debts(message: types.Message):
+    debts = await get_all_debts()
+    if not debts:
+        await message.reply("Қарз йўқ.")
+        return
+    lines = ["💰 **Қарздорлик:**\n"]
+    for d in debts:
+        if d.amount > 0:
+            lines.append(f"👤 {d.customer_name}: {format_currency(d.amount)}")
+    await message.reply("\n".join(lines), parse_mode="Markdown")
+
+# =====================
+# 6. ҚАРЗНИ ТЎЛАШ
+# =====================
+@dp.message_handler(lambda m: m.text == "💸 Қарзни тўлаш")
+async def pay_debt_start(message: types.Message):
+    keyboard = await get_customer_keyboard()
+    await message.reply("Мижозни танланг:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda call: call.data.startswith("cust_"))
+async def pay_debt_customer_selected(call: types.CallbackQuery):
+    customer = call.data.replace("cust_", "")
+    debt = await get_debt(customer)
+    current_debt = debt.amount if debt else 0
+    if current_debt <= 0:
+        await call.message.reply(f"❌ {customer} қарзи йўқ.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    await call.message.reply(
+        f"👤 {customer} қарзи: {format_currency(current_debt)}\n"
+        f"Тўлайдиган суммани киритинг:",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+    dp.register_next_step_handler(call.message, lambda m: pay_debt_finish(m, customer))
+
+async def pay_debt_finish(message: types.Message, customer):
+    if not message.text.isdigit():
+        await message.reply("❌ Сумма киритинг.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    amount = int(message.text)
+    if amount <= 0:
+        await message.reply("❌ Сумма нотўғри.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    debt = await get_debt(customer)
+    current_debt = debt.amount if debt else 0
+    if amount > current_debt:
+        await message.reply(f"❌ Қарздан ортиқ тўлайсиз. Қарз: {format_currency(current_debt)}", reply_markup=types.ReplyKeyboardRemove())
+        return
+    async with async_session() as session:
+        new_amount = current_debt - amount
+        if new_amount == 0:
+            await session.execute(delete(Debt).where(Debt.customer_name == customer))
+        else:
+            await session.execute(
+                update(Debt)
+                .where(Debt.customer_name == customer)
+                .values(amount=new_amount)
+            )
+        await session.commit()
+    logger.info(f"ТЎЛОВ: {customer} {amount} сўм тўлади. Қолган қарз: {new_amount}")
+    await message.reply(f"✅ Тўланди. Қолган қарз: {format_currency(new_amount)}", reply_markup=types.ReplyKeyboardRemove())
+    await send_welcome(message)
+
+# =====================
+# 7. ДОРИ СОЗЛАШ
+# =====================
+@dp.message_handler(lambda m: m.text == "⚙️ Дори созлаш")
+async def config_product_start(message: types.Message):
+    keyboard = await get_product_keyboard()
+    await message.reply("Дорини танланг:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda call: call.data.startswith("prod_"))
+async def config_product_selected(call: types.CallbackQuery):
+    product = call.data.replace("prod_", "")
+    await call.message.reply(f"🛠 {product} учун янги нархни киритинг (сўм):", reply_markup=types.ReplyKeyboardRemove())
+    dp.register_next_step_handler(call.message, lambda m: config_price(m, product))
+
+async def config_price(message: types.Message, product_name):
+    if not message.text.isdigit():
+        await message.reply("❌ Нархни сон киритинг.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    price = int(message.text)
+    await message.reply("Чегирма фоизини киритинг (0-99):", reply_markup=types.ReplyKeyboardRemove())
+    dp.register_next_step_handler(message, lambda m: config_discount(m, product_name, price))
+
+async def config_discount(message: types.Message, product_name, price):
+    if not message.text.isdigit():
+        await message.reply("❌ Фоизни сон киритинг.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    discount = int(message.text)
+    if discount < 0 or discount > 99:
+        await message.reply("❌ Фоиз 0-99 оралиғида бўлиши керак.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    async with async_session() as session:
+        await session.execute(
+            update(Product)
+            .where(Product.name == product_name)
+            .values(price=price, discount=discount)
+        )
+        await session.commit()
+    logger.info(f"Созланди: {product_name} нарх={price}, чегирма={discount}%")
+    await message.reply(
+        f"✅ {product_name} янгиланди:\n💰 {format_currency(price)}\n🎁 {discount}% чегирма",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+    await send_welcome(message)
+
+# =====================
+# 8. МИЖОЗЛАР
+# =====================
+@dp.message_handler(lambda m: m.text == "👤 Мижозлар")
+async def customers_menu(message: types.Message):
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    markup.add("👤 Янги мижоз қўшиш", "⬅️ Орқага")
+    await message.reply("Мижозларни бошқариш:", reply_markup=markup)
+
+@dp.message_handler(lambda m: m.text == "👤 Янги мижоз қўшиш")
+async def add_customer_start(message: types.Message):
+    await message.reply("Янги мижоз исми:", reply_markup=types.ReplyKeyboardRemove())
+    dp.register_next_step_handler(message, add_customer_finish)
+
+async def add_customer_finish(message: types.Message):
+    name = message.text.strip()
+    if not name:
+        await message.reply("❌ Исм бўш бўлмасин.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    customers = await get_all_customers()
+    if any(c.name == name for c in customers):
+        await message.reply(f"❌ {name} аллақачон бор.", reply_markup=types.ReplyKeyboardRemove())
+        await send_welcome(message)
+        return
+    async with async_session() as session:
+        new_customer = Customer(name=name)
+        session.add(new_customer)
+        await session.commit()
+    logger.info(f"Янги мижоз қўшилди: {name}")
+    await message.reply(f"✅ {name} мижозлар рўйхатига қўшилди.", reply_markup=types.ReplyKeyboardRemove())
+    await send_welcome(message)
+
+# =====================
+# 9. УМУМИЙ ТАРИХ
+# =====================
+@dp.message_handler(lambda m: m.text == "📜 Умумий тарих")
+async def show_logs(message: types.Message):
+    logs = await get_sale_logs()
+    if not logs:
+        await message.reply("Тарих бўш.")
+        return
+    lines = ["📜 **Сўнгги 100 та операция:**\n"]
+    for log in logs:
+        lines.append(
+            f"[{log.timestamp}] {log.payment_type}: {log.customer} → {log.product} x{log.quantity} = {format_currency(log.total)}"
+        )
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (давоми бор)"
+    await message.reply(text, parse_mode="Markdown")
+
+# =====================
+# 10. ОРҚАГА / БЕКОР
+# =====================
+@dp.message_handler(lambda m: m.text == "⬅️ Орқага")
+async def back_to_main(message: types.Message):
+    await send_welcome(message)
+
+@dp.callback_query_handler(lambda call: call.data == "back_main")
+async def back_callback(call: types.CallbackQuery):
+    await send_welcome(call.message)
+
+# =====================
+# 11. ХАТОЛИКЛАРНИ ТУТИШ
+# =====================
+@dp.message_handler(lambda m: True)
+async def fallback(message: types.Message):
+    if message.text.startswith("/"):
+        return
+    await message.reply("⚠️ Нотўғри команда. Асосий менюдан фойдаланинг.", reply_markup=types.ReplyKeyboardRemove())
+    await send_welcome(message)
+
+# =====================
+# 12. WEBHOOK (Railway учун)
+# =====================
+async def on_startup(dp):
+    await init_db()
+    logger.info("🚀 VETGUARD ERP v3.0 (PostgreSQL) ишга тушди")
+    webhook_url = os.getenv("WEBHOOK_URL")
+    if webhook_url:
+        await bot.set_webhook(webhook_url)
+
+async def on_shutdown(dp):
+    await bot.delete_webhook()
+    await engine.dispose()
+
+if __name__ == "__main__":
+    executor.start_webhook(
+        dp,
+        webhook_path='/webhook',
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        host='0.0.0.0',
+        port=int(os.getenv("PORT", 8443))
+    )
