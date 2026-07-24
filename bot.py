@@ -3,11 +3,10 @@ import logging
 from datetime import datetime
 from dotenv import load_dotenv
 
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.utils import executor
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
+import asyncpg
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy import Column, Integer, String, Float, select, update, delete
@@ -20,13 +19,12 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 LOW_STOCK_LIMIT = 5
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
-dp.middleware.setup(LoggingMiddleware())
-
+# ==========================
+# SQLAlchemy ORM
+# ==========================
 Base = declarative_base()
 
 class Product(Base):
@@ -65,6 +63,9 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+# ==========================
+# DATABASE FUNCTIONS
+# ==========================
 async def get_product(name):
     async with async_session() as session:
         result = await session.execute(select(Product).where(Product.name == name))
@@ -107,6 +108,9 @@ async def get_sale_logs():
         result = await session.execute(select(SaleLog).order_by(SaleLog.id.desc()).limit(100))
         return result.scalars().all()
 
+# ==========================
+# UTILITIES
+# ==========================
 def format_currency(amount):
     return f"{amount:,.0f} сўм"
 
@@ -124,404 +128,389 @@ async def get_inventory_text():
     return "\n".join(lines)
 
 async def get_product_keyboard():
-    markup = InlineKeyboardMarkup(row_width=2)
-    products = await get_all_products()
-    for p in products:
-        markup.add(InlineKeyboardButton(p.name, callback_data=f"prod_{p.name}"))
-    markup.add(InlineKeyboardButton("⬅️ Орқага", callback_data="back_main"))
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(p.name, callback_data=f"prod_{p.name}")] for p in await get_all_products()
+    ] + [[InlineKeyboardButton("⬅️ Орқага", callback_data="back_main")]])
     return markup
 
 async def get_customer_keyboard():
-    markup = InlineKeyboardMarkup(row_width=2)
     customers = await get_all_customers()
-    for c in customers:
-        markup.add(InlineKeyboardButton(c.name, callback_data=f"cust_{c.name}"))
-    markup.add(InlineKeyboardButton("⬅️ Орқага", callback_data="back_main"))
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(c.name, callback_data=f"cust_{c.name}")] for c in customers
+    ] + [[InlineKeyboardButton("⬅️ Орқага", callback_data="back_main")]])
     return markup
 
-@dp.message_handler(commands=['start', 'menu'])
-async def send_welcome(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.reply("🚫 Рухсат йўқ.")
+# ==========================
+# KEYBOARD MENU
+# ==========================
+def main_menu_keyboard():
+    markup = ReplyKeyboardMarkup([
+        [KeyboardButton("➕ Келди"), KeyboardButton("➖ Сотиш")],
+        [KeyboardButton("📦 Омбор қолдиғи"), KeyboardButton("💰 Қарздорлик")],
+        [KeyboardButton("💸 Қарзни тўлаш"), KeyboardButton("⚙️ Дори созлаш")],
+        [KeyboardButton("👤 Мижозлар"), KeyboardButton("🆕 Янги дори қўшиш")],
+        [KeyboardButton("📜 Умумий тарих")]
+    ], resize_keyboard=True)
+    return markup
+
+# ==========================
+# START
+# ==========================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("🚫 Рухсат йўқ.")
         return
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(
-        KeyboardButton("➕ Келди"),
-        KeyboardButton("➖ Сотиш"),
-        KeyboardButton("📦 Омбор қолдиғи"),
-        KeyboardButton("💰 Қарздорлик"),
-        KeyboardButton("💸 Қарзни тўлаш"),
-        KeyboardButton("⚙️ Дори созлаш"),
-        KeyboardButton("👤 Мижозлар"),
-        KeyboardButton("🆕 Янги дори қўшиш"),
-        KeyboardButton("📜 Умумий тарих")
-    )
-    await message.reply("📦 **VETGUARD ERP v3.0 (PostgreSQL)**", reply_markup=markup, parse_mode="Markdown")
+    await update.message.reply_text("📦 **VETGUARD ERP v3.0 (PostgreSQL)**", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
 
-# =====================
+# ==========================
 # 1. ЯНГИ ДОРИ ҚЎШИШ
-# =====================
-@dp.message_handler(lambda m: m.text == "🆕 Янги дори қўшиш")
-async def add_new_product_start(message: types.Message):
-    await message.reply("🆕 Янги дори номини киритинг:", reply_markup=types.ReplyKeyboardRemove())
-    dp.register_next_step_handler(message, add_new_product_finish)
+# ==========================
+async def add_new_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🆕 Янги дори номини киритинг:", reply_markup=None)
+    context.user_data['action'] = 'add_product'
 
-async def add_new_product_finish(message: types.Message):
-    name = message.text.strip()
+async def add_new_product_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
     if not name:
-        await message.reply("❌ Ном бўш бўлмасин.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Ном бўш бўлмасин.")
         return
     existing = await get_product(name)
     if existing:
-        await message.reply(f"❌ {name} аллақачон бор.", reply_markup=types.ReplyKeyboardRemove())
-        await send_welcome(message)
+        await update.message.reply_text(f"❌ {name} аллақачон бор.")
+        await start(update, context)
         return
     async with async_session() as session:
-        new_product = Product(name=name, quantity=0, price=0, discount=0)
-        session.add(new_product)
+        session.add(Product(name=name, quantity=0, price=0, discount=0))
         await session.commit()
     logger.info(f"Янги дори қўшилди: {name}")
-    await message.reply(f"✅ {name} қўшилди.\nЭнди нарх ва чегирмани созланг.", reply_markup=types.ReplyKeyboardRemove())
-    await send_welcome(message)
+    await update.message.reply_text(f"✅ {name} қўшилди.", reply_markup=main_menu_keyboard())
+    await start(update, context)
 
-# =====================
+# ==========================
 # 2. ДОРИ КЕЛИШИ
-# =====================
-@dp.message_handler(lambda m: m.text == "➕ Келди")
-async def incoming_start(message: types.Message):
-    keyboard = await get_product_keyboard()
-    await message.reply("Дорини танланг:", reply_markup=keyboard)
+# ==========================
+async def incoming_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Дорини танланг:", reply_markup=await get_product_keyboard())
 
-@dp.callback_query_handler(lambda call: call.data.startswith("prod_"))
-async def incoming_product_selected(call: types.CallbackQuery):
-    product = call.data.replace("prod_", "")
-    await call.message.reply(f"📥 {product} миқдорини киритинг:", reply_markup=types.ReplyKeyboardRemove())
-    dp.register_next_step_handler(call.message, lambda m: incoming_quantity(m, product))
+async def incoming_product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    product = query.data.replace("prod_", "")
+    context.user_data['incoming_product'] = product
+    await query.message.reply_text(f"📥 {product} миқдорини киритинг:", reply_markup=None)
+    context.user_data['action'] = 'incoming_quantity'
 
-async def incoming_quantity(message: types.Message, product_name):
-    if not message.text.isdigit():
-        await message.reply("❌ Сон киритинг.", reply_markup=types.ReplyKeyboardRemove())
+async def incoming_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Сон киритинг.")
         return
-    quantity = int(message.text)
+    quantity = int(update.message.text)
+    product_name = context.user_data.get('incoming_product')
     product = await get_product(product_name)
     if not product:
-        await message.reply("❌ Дори топилмади.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Дори топилмади.")
         return
     async with async_session() as session:
-        await session.execute(
-            update(Product)
-            .where(Product.name == product_name)
-            .values(quantity=Product.quantity + quantity)
-        )
+        await session.execute(update(Product).where(Product.name == product_name).values(quantity=Product.quantity + quantity))
         await session.commit()
     logger.info(f"Келди: {product_name} +{quantity}")
-    await message.reply(f"✅ {product_name} миқдори {quantity} донага ошди.", reply_markup=types.ReplyKeyboardRemove())
-    await send_welcome(message)
+    await update.message.reply_text(f"✅ {product_name} миқдори {quantity} донага ошди.", reply_markup=main_menu_keyboard())
+    await start(update, context)
 
-# =====================
+# ==========================
 # 3. СОТИШ
-# =====================
-@dp.message_handler(lambda m: m.text == "➖ Сотиш")
-async def sell_start(message: types.Message):
-    keyboard = await get_product_keyboard()
-    await message.reply("Дорини танланг:", reply_markup=keyboard)
+# ==========================
+async def sell_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Дорини танланг:", reply_markup=await get_product_keyboard())
 
-@dp.callback_query_handler(lambda call: call.data.startswith("prod_"))
-async def sell_product_selected(call: types.CallbackQuery):
-    product = call.data.replace("prod_", "")
-    keyboard = await get_customer_keyboard()
-    await call.message.reply(f"👤 Мижозни танланг:", reply_markup=keyboard)
-    dp.register_next_step_handler(call.message, lambda m: sell_customer_selected(m, product))
+async def sell_product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    product = query.data.replace("prod_", "")
+    context.user_data['sell_product'] = product
+    await query.message.reply_text("👤 Мижозни танланг:", reply_markup=await get_customer_keyboard())
+    context.user_data['action'] = 'sell_customer'
 
-async def sell_customer_selected(message: types.Message, product_name):
-    if message.text and message.text.startswith("cust_"):
-        customer = message.text.replace("cust_", "")
+async def sell_customer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        customer = query.data.replace("cust_", "")
     else:
-        customer = message.text.strip()
+        customer = update.message.text.strip()
     customers = await get_all_customers()
     if not any(c.name == customer for c in customers):
-        await message.reply("❌ Мижоз топилмади.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Мижоз топилмади.")
         return
-    markup = ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("💵 Нақд", "💳 Насия")
-    await message.reply("Тўлов турини танланг:", reply_markup=markup)
-    dp.register_next_step_handler(message, lambda m: sell_payment_type(m, product_name, customer))
+    context.user_data['sell_customer'] = customer
+    markup = ReplyKeyboardMarkup([["💵 Нақд", "💳 Насия"]], resize_keyboard=True)
+    await update.message.reply_text("Тўлов турини танланг:", reply_markup=markup)
+    context.user_data['action'] = 'sell_payment'
 
-async def sell_payment_type(message: types.Message, product_name, customer):
-    payment = message.text
+async def sell_payment_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    payment = update.message.text
     if payment not in ["💵 Нақд", "💳 Насия"]:
-        await message.reply("❌ Нотўғри танлов.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Нотўғри танлов.")
         return
+    context.user_data['sell_payment'] = payment
+    product_name = context.user_data.get('sell_product')
     product = await get_product(product_name)
     if not product:
-        await message.reply("❌ Дори топилмади.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Дори топилмади.")
         return
     final_price = product.price * (1 - product.discount / 100)
-    await message.reply(
+    await update.message.reply_text(
         f"💵 {product_name} нархи: {format_currency(final_price)} (чегирма {product.discount}%)\n"
         f"Миқдорини киритинг:",
-        reply_markup=types.ReplyKeyboardRemove()
+        reply_markup=None
     )
-    dp.register_next_step_handler(message, lambda m: sell_finish(m, product_name, customer, payment, final_price))
+    context.user_data['sell_final_price'] = final_price
+    context.user_data['action'] = 'sell_quantity'
 
-async def sell_finish(message: types.Message, product_name, customer, payment_type, final_price):
-    if not message.text.isdigit():
-        await message.reply("❌ Сон киритинг.", reply_markup=types.ReplyKeyboardRemove())
+async def sell_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Сон киритинг.")
         return
-    quantity = int(message.text)
+    quantity = int(update.message.text)
     if quantity <= 0:
-        await message.reply("❌ Миқдор 0 дан катта бўлиши керак.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Миқдор 0 дан катта бўлиши керак.")
         return
+    product_name = context.user_data.get('sell_product')
+    customer = context.user_data.get('sell_customer')
+    payment_type = context.user_data.get('sell_payment')
+    final_price = context.user_data.get('sell_final_price')
     product = await get_product(product_name)
     if not product or product.quantity < quantity:
         available = product.quantity if product else 0
-        await message.reply(f"❌ Омборда {available} дона бор.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text(f"❌ Омборда {available} дона бор.")
         return
     total = int(final_price * quantity)
-    
     async with async_session() as session:
-        await session.execute(
-            update(Product)
-            .where(Product.name == product_name)
-            .values(quantity=Product.quantity - quantity)
-        )
+        await session.execute(update(Product).where(Product.name == product_name).values(quantity=Product.quantity - quantity))
         if payment_type == "💳 Насия":
             debt = await get_debt(customer)
             if debt:
-                await session.execute(
-                    update(Debt)
-                    .where(Debt.customer_name == customer)
-                    .values(amount=Debt.amount + total)
-                )
+                await session.execute(update(Debt).where(Debt.customer_name == customer).values(amount=Debt.amount + total))
             else:
-                new_debt = Debt(customer_name=customer, amount=total)
-                session.add(new_debt)
+                session.add(Debt(customer_name=customer, amount=total))
         await log_sale(customer, product_name, quantity, total, payment_type)
         await session.commit()
-    
-    await message.reply(
-        f"✅ Сотилди: {product_name} x{quantity}\n"
-        f"💰 {format_currency(total)}\n"
-        f"📦 Қолди: {product.quantity - quantity}",
-        reply_markup=types.ReplyKeyboardRemove()
+    await update.message.reply_text(
+        f"✅ Сотилди: {product_name} x{quantity}\n💰 {format_currency(total)}\n📦 Қолди: {product.quantity - quantity}",
+        reply_markup=main_menu_keyboard()
     )
     if product.quantity - quantity <= LOW_STOCK_LIMIT:
-        await message.reply(
-            f"⚠️ **{product_name}** тугаяпти! {product.quantity - quantity} дона қолди.",
-            parse_mode="Markdown"
-        )
-    await send_welcome(message)
+        await update.message.reply_text(f"⚠️ **{product_name}** тугаяпти! {product.quantity - quantity} дона қолди.", parse_mode="Markdown")
+    await start(update, context)
 
-# =====================
+# ==========================
 # 4. ОМБОР ҚОЛДИҒИ
-# =====================
-@dp.message_handler(lambda m: m.text == "📦 Омбор қолдиғи")
-async def show_inventory(message: types.Message):
-    text = await get_inventory_text()
-    await message.reply(text, parse_mode="Markdown")
+# ==========================
+async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(await get_inventory_text(), parse_mode="Markdown")
 
-# =====================
+# ==========================
 # 5. ҚАРЗДОРЛИК
-# =====================
-@dp.message_handler(lambda m: m.text == "💰 Қарздорлик")
-async def show_debts(message: types.Message):
+# ==========================
+async def show_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     debts = await get_all_debts()
     if not debts:
-        await message.reply("Қарз йўқ.")
+        await update.message.reply_text("Қарз йўқ.")
         return
     lines = ["💰 **Қарздорлик:**\n"]
     for d in debts:
         if d.amount > 0:
             lines.append(f"👤 {d.customer_name}: {format_currency(d.amount)}")
-    await message.reply("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
-# =====================
+# ==========================
 # 6. ҚАРЗНИ ТЎЛАШ
-# =====================
-@dp.message_handler(lambda m: m.text == "💸 Қарзни тўлаш")
-async def pay_debt_start(message: types.Message):
-    keyboard = await get_customer_keyboard()
-    await message.reply("Мижозни танланг:", reply_markup=keyboard)
+# ==========================
+async def pay_debt_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Мижозни танланг:", reply_markup=await get_customer_keyboard())
+    context.user_data['action'] = 'pay_debt_customer'
 
-@dp.callback_query_handler(lambda call: call.data.startswith("cust_"))
-async def pay_debt_customer_selected(call: types.CallbackQuery):
-    customer = call.data.replace("cust_", "")
+async def pay_debt_customer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    customer = query.data.replace("cust_", "")
     debt = await get_debt(customer)
     current_debt = debt.amount if debt else 0
     if current_debt <= 0:
-        await call.message.reply(f"❌ {customer} қарзи йўқ.", reply_markup=types.ReplyKeyboardRemove())
+        await query.message.reply_text(f"❌ {customer} қарзи йўқ.")
         return
-    await call.message.reply(
-        f"👤 {customer} қарзи: {format_currency(current_debt)}\n"
-        f"Тўлайдиган суммани киритинг:",
-        reply_markup=types.ReplyKeyboardRemove()
-    )
-    dp.register_next_step_handler(call.message, lambda m: pay_debt_finish(m, customer))
+    context.user_data['pay_debt_customer'] = customer
+    await query.message.reply_text(f"👤 {customer} қарзи: {format_currency(current_debt)}\nТўлайдиган суммани киритинг:", reply_markup=None)
+    context.user_data['action'] = 'pay_debt_amount'
 
-async def pay_debt_finish(message: types.Message, customer):
-    if not message.text.isdigit():
-        await message.reply("❌ Сумма киритинг.", reply_markup=types.ReplyKeyboardRemove())
+async def pay_debt_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Сумма киритинг.")
         return
-    amount = int(message.text)
+    amount = int(update.message.text)
     if amount <= 0:
-        await message.reply("❌ Сумма нотўғри.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Сумма нотўғри.")
         return
+    customer = context.user_data.get('pay_debt_customer')
     debt = await get_debt(customer)
     current_debt = debt.amount if debt else 0
     if amount > current_debt:
-        await message.reply(f"❌ Қарздан ортиқ тўлайсиз. Қарз: {format_currency(current_debt)}", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text(f"❌ Қарздан ортиқ тўлайсиз. Қарз: {format_currency(current_debt)}")
         return
     async with async_session() as session:
         new_amount = current_debt - amount
         if new_amount == 0:
             await session.execute(delete(Debt).where(Debt.customer_name == customer))
         else:
-            await session.execute(
-                update(Debt)
-                .where(Debt.customer_name == customer)
-                .values(amount=new_amount)
-            )
+            await session.execute(update(Debt).where(Debt.customer_name == customer).values(amount=new_amount))
         await session.commit()
     logger.info(f"ТЎЛОВ: {customer} {amount} сўм тўлади. Қолган қарз: {new_amount}")
-    await message.reply(f"✅ Тўланди. Қолган қарз: {format_currency(new_amount)}", reply_markup=types.ReplyKeyboardRemove())
-    await send_welcome(message)
+    await update.message.reply_text(f"✅ Тўланди. Қолган қарз: {format_currency(new_amount)}", reply_markup=main_menu_keyboard())
+    await start(update, context)
 
-# =====================
+# ==========================
 # 7. ДОРИ СОЗЛАШ
-# =====================
-@dp.message_handler(lambda m: m.text == "⚙️ Дори созлаш")
-async def config_product_start(message: types.Message):
-    keyboard = await get_product_keyboard()
-    await message.reply("Дорини танланг:", reply_markup=keyboard)
+# ==========================
+async def config_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Дорини танланг:", reply_markup=await get_product_keyboard())
+    context.user_data['action'] = 'config_product'
 
-@dp.callback_query_handler(lambda call: call.data.startswith("prod_"))
-async def config_product_selected(call: types.CallbackQuery):
-    product = call.data.replace("prod_", "")
-    await call.message.reply(f"🛠 {product} учун янги нархни киритинг (сўм):", reply_markup=types.ReplyKeyboardRemove())
-    dp.register_next_step_handler(call.message, lambda m: config_price(m, product))
+async def config_product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    product = query.data.replace("prod_", "")
+    context.user_data['config_product'] = product
+    await query.message.reply_text(f"🛠 {product} учун янги нархни киритинг (сўм):", reply_markup=None)
+    context.user_data['action'] = 'config_price'
 
-async def config_price(message: types.Message, product_name):
-    if not message.text.isdigit():
-        await message.reply("❌ Нархни сон киритинг.", reply_markup=types.ReplyKeyboardRemove())
+async def config_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Нархни сон киритинг.")
         return
-    price = int(message.text)
-    await message.reply("Чегирма фоизини киритинг (0-99):", reply_markup=types.ReplyKeyboardRemove())
-    dp.register_next_step_handler(message, lambda m: config_discount(m, product_name, price))
+    price = int(update.message.text)
+    context.user_data['config_price'] = price
+    await update.message.reply_text("Чегирма фоизини киритинг (0-99):", reply_markup=None)
+    context.user_data['action'] = 'config_discount'
 
-async def config_discount(message: types.Message, product_name, price):
-    if not message.text.isdigit():
-        await message.reply("❌ Фоизни сон киритинг.", reply_markup=types.ReplyKeyboardRemove())
+async def config_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Фоизни сон киритинг.")
         return
-    discount = int(message.text)
+    discount = int(update.message.text)
     if discount < 0 or discount > 99:
-        await message.reply("❌ Фоиз 0-99 оралиғида бўлиши керак.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Фоиз 0-99 оралиғида бўлиши керак.")
         return
+    product_name = context.user_data.get('config_product')
+    price = context.user_data.get('config_price')
     async with async_session() as session:
-        await session.execute(
-            update(Product)
-            .where(Product.name == product_name)
-            .values(price=price, discount=discount)
-        )
+        await session.execute(update(Product).where(Product.name == product_name).values(price=price, discount=discount))
         await session.commit()
     logger.info(f"Созланди: {product_name} нарх={price}, чегирма={discount}%")
-    await message.reply(
+    await update.message.reply_text(
         f"✅ {product_name} янгиланди:\n💰 {format_currency(price)}\n🎁 {discount}% чегирма",
-        reply_markup=types.ReplyKeyboardRemove()
+        reply_markup=main_menu_keyboard()
     )
-    await send_welcome(message)
+    await start(update, context)
 
-# =====================
+# ==========================
 # 8. МИЖОЗЛАР
-# =====================
-@dp.message_handler(lambda m: m.text == "👤 Мижозлар")
-async def customers_menu(message: types.Message):
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-    markup.add("👤 Янги мижоз қўшиш", "⬅️ Орқага")
-    await message.reply("Мижозларни бошқариш:", reply_markup=markup)
+# ==========================
+async def customers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    markup = ReplyKeyboardMarkup([["👤 Янги мижоз қўшиш", "⬅️ Орқага"]], resize_keyboard=True)
+    await update.message.reply_text("Мижозларни бошқариш:", reply_markup=markup)
 
-@dp.message_handler(lambda m: m.text == "👤 Янги мижоз қўшиш")
-async def add_customer_start(message: types.Message):
-    await message.reply("Янги мижоз исми:", reply_markup=types.ReplyKeyboardRemove())
-    dp.register_next_step_handler(message, add_customer_finish)
+async def add_customer_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Янги мижоз исми:", reply_markup=None)
+    context.user_data['action'] = 'add_customer'
 
-async def add_customer_finish(message: types.Message):
-    name = message.text.strip()
+async def add_customer_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
     if not name:
-        await message.reply("❌ Исм бўш бўлмасин.", reply_markup=types.ReplyKeyboardRemove())
+        await update.message.reply_text("❌ Исм бўш бўлмасин.")
         return
     customers = await get_all_customers()
     if any(c.name == name for c in customers):
-        await message.reply(f"❌ {name} аллақачон бор.", reply_markup=types.ReplyKeyboardRemove())
-        await send_welcome(message)
+        await update.message.reply_text(f"❌ {name} аллақачон бор.")
+        await start(update, context)
         return
     async with async_session() as session:
-        new_customer = Customer(name=name)
-        session.add(new_customer)
+        session.add(Customer(name=name))
         await session.commit()
     logger.info(f"Янги мижоз қўшилди: {name}")
-    await message.reply(f"✅ {name} мижозлар рўйхатига қўшилди.", reply_markup=types.ReplyKeyboardRemove())
-    await send_welcome(message)
+    await update.message.reply_text(f"✅ {name} мижозлар рўйхатига қўшилди.", reply_markup=main_menu_keyboard())
+    await start(update, context)
 
-# =====================
+# ==========================
 # 9. УМУМИЙ ТАРИХ
-# =====================
-@dp.message_handler(lambda m: m.text == "📜 Умумий тарих")
-async def show_logs(message: types.Message):
+# ==========================
+async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logs = await get_sale_logs()
     if not logs:
-        await message.reply("Тарих бўш.")
+        await update.message.reply_text("Тарих бўш.")
         return
     lines = ["📜 **Сўнгги 100 та операция:**\n"]
     for log in logs:
-        lines.append(
-            f"[{log.timestamp}] {log.payment_type}: {log.customer} → {log.product} x{log.quantity} = {format_currency(log.total)}"
-        )
+        lines.append(f"[{log.timestamp}] {log.payment_type}: {log.customer} → {log.product} x{log.quantity} = {format_currency(log.total)}")
     text = "\n".join(lines)
     if len(text) > 4000:
         text = text[:4000] + "\n... (давоми бор)"
-    await message.reply(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-# =====================
-# 10. ОРҚАГА / БЕКОР
-# =====================
-@dp.message_handler(lambda m: m.text == "⬅️ Орқага")
-async def back_to_main(message: types.Message):
-    await send_welcome(message)
+# ==========================
+# БЕКОР / ОРҚАГА
+# ==========================
+async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start(update, context)
 
-@dp.callback_query_handler(lambda call: call.data == "back_main")
-async def back_callback(call: types.CallbackQuery):
-    await send_welcome(call.message)
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "back_main":
+        await start(update, context)
 
-# =====================
-# 11. ХАТОЛИКЛАРНИ ТУТИШ
-# =====================
-@dp.message_handler(lambda m: True)
-async def fallback(message: types.Message):
-    if message.text.startswith("/"):
-        return
-    await message.reply("⚠️ Нотўғри команда. Асосий менюдан фойдаланинг.", reply_markup=types.ReplyKeyboardRemove())
-    await send_welcome(message)
-
-# =====================
-# 12. WEBHOOK (Railway учун)
-# =====================
-async def on_startup(dp):
+# ==========================
+# MAIN
+# ==========================
+async def post_init(application: Application):
     await init_db()
-    logger.info("🚀 VETGUARD ERP v3.0 (PostgreSQL) ишга тушди")
-    webhook_url = os.getenv("WEBHOOK_URL")
-    if webhook_url:
-        await bot.set_webhook(webhook_url)
+    logger.info("🚀 VETGUARD ERP v3.0 (Full) ишга тушди!")
 
-async def on_shutdown(dp):
-    await bot.delete_webhook()
-    await engine.dispose()
+def main():
+    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
+    application.add_handler(CommandHandler("start", start))
+
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^🆕 Янги дори қўшиш$"), add_new_product_start))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^➕ Келди$"), incoming_start))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^➖ Сотиш$"), sell_start))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^📦 Омбор қолдиғи$"), inventory))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^💰 Қарздорлик$"), show_debts))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^💸 Қарзни тўлаш$"), pay_debt_start))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^⚙️ Дори созлаш$"), config_product_start))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^👤 Мижозлар$"), customers_menu))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^👤 Янги мижоз қўшиш$"), add_customer_start))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^📜 Умумий тарих$"), show_logs))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^⬅️ Орқага$"), back_to_main))
+
+    # Callback handlers
+    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^back_main$"))
+    application.add_handler(CallbackQueryHandler(incoming_product_selected, pattern="^prod_"))
+    application.add_handler(CallbackQueryHandler(sell_product_selected, pattern="^prod_"))
+    application.add_handler(CallbackQueryHandler(sell_customer_selected, pattern="^cust_"))
+    application.add_handler(CallbackQueryHandler(pay_debt_customer_selected, pattern="^cust_"))
+    application.add_handler(CallbackQueryHandler(config_product_selected, pattern="^prod_"))
+
+    # Step handlers (text input)
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^[0-9]+$") & filters.ChatType.PRIVATE, lambda u, c: None))
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, lambda u, c: None))
+
+    port = int(os.getenv("PORT", 8443))
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path="/webhook",
+        webhook_url=os.getenv("WEBHOOK_URL")
+    )
 
 if __name__ == "__main__":
-    executor.start_webhook(
-        dp,
-        webhook_path='/webhook',
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        host='0.0.0.0',
-        port=int(os.getenv("PORT", 8443))
-    )
+    main()
