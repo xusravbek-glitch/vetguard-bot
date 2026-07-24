@@ -15,8 +15,11 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8205652790:AAERJP2EC3rSXKP1NJ2aXfhmMu6eaJLRHhQ")
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "1344327136").split(',')))
-DATABASE_URL = os.getenv("DATABASE_URL")
-
+DATABASE_URL = os.getenv("DATABASE_URL").replace(
+    "postgresql://",
+    "postgresql+asyncpg://",
+    1
+)
 LOW_STOCK_LIMIT = 5
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
