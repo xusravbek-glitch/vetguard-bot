@@ -1,157 +1,208 @@
-import aiosqlite
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from collections import namedtuple
 
-DB_PATH = "vetguard.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Дорилар жадвали
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE,
-                quantity INTEGER DEFAULT 0,
-                price REAL DEFAULT 0,
-                discount REAL DEFAULT 0
-            )
-        """)
-        # Мижозлар жадвали
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS customers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE
-            )
-        """)
-        # Қарздорлар жадвали
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS debts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_name TEXT UNIQUE,
-                amount REAL DEFAULT 0
-            )
-        """)
-        # Сотувлар тарихи жадвали
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS sales (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer TEXT,
-                product TEXT,
-                quantity INTEGER,
-                price REAL,
-                discount_applied REAL,
-                total REAL,
-                payment_type TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.commit()
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Дорилар жадвали
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE,
+            quantity INTEGER DEFAULT 0,
+            price REAL DEFAULT 0,
+            discount REAL DEFAULT 0
+        )
+    """)
+    # Мижозлар жадвали
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS customers (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE
+        )
+    """)
+    # Қарздорлар жадвали
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS debts (
+            id SERIAL PRIMARY KEY,
+            customer_name TEXT UNIQUE,
+            amount REAL DEFAULT 0
+        )
+    """)
+    # Сотувлар тарихи жадвали
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sales (
+            id SERIAL PRIMARY KEY,
+            customer TEXT,
+            product TEXT,
+            quantity INTEGER,
+            price REAL,
+            discount_applied REAL,
+            total REAL,
+            payment_type TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 async def get_product(name: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT name, quantity, price, discount FROM products WHERE name = ?", (name,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from collections import namedtuple
-                Product = namedtuple("Product", ["name", "quantity", "price", "discount"])
-                return Product(*row)
-            return None
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, quantity, price, discount FROM products WHERE name = %s", (name,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if row:
+        Product = namedtuple("Product", ["name", "quantity", "price", "discount"])
+        return Product(row['name'], row['quantity'], row['price'], row['discount'])
+    return None
 
 async def get_all_products():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT name, quantity, price, discount FROM products ORDER BY name") as cursor:
-            rows = await cursor.fetchall()
-            from collections import namedtuple
-            Product = namedtuple("Product", ["name", "quantity", "price", "discount"])
-            return [Product(*row) for row in rows]
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, quantity, price, discount FROM products ORDER BY name")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    Product = namedtuple("Product", ["name", "quantity", "price", "discount"])
+    return [Product(row['name'], row['quantity'], row['price'], row['discount']) for row in rows]
 
 async def add_product(name: str, quantity: int = 0, price: float = 0, discount: float = 0):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO products (name, quantity, price, discount) 
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET quantity = quantity + ?
-        """, (name, quantity, price, discount, quantity))
-        await db.commit()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO products (name, quantity, price, discount) 
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT(name) DO UPDATE SET 
+            quantity = products.quantity + %s,
+            price = %s,
+            discount = %s
+    """, (name, quantity, price, discount, quantity, price, discount))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 async def update_product_quantity(name: str, quantity: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE products SET quantity = ? WHERE name = ?", (quantity, name))
-        await db.commit()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE products SET quantity = %s WHERE name = %s", (quantity, name))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 async def update_product_details(name: str, price: float, discount: float):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE products SET price = ?, discount = ? WHERE name = ?", (price, discount, name))
-        await db.commit()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE products SET price = %s, discount = %s WHERE name = %s", (price, discount, name))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 async def add_customer(name: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR IGNORE INTO customers (name) VALUES (?)", (name,))
-        await db.commit()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO customers (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (name,))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 async def get_all_customers():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT name FROM customers ORDER BY name") as cursor:
-            rows = await cursor.fetchall()
-            from collections import namedtuple
-            Customer = namedtuple("Customer", ["name"])
-            return [Customer(*row) for row in rows]
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM customers ORDER BY name")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    Customer = namedtuple("Customer", ["name"])
+    return [Customer(row['name']) for row in rows]
 
 async def get_debt(customer_name: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT customer_name, amount FROM debts WHERE customer_name = ?", (customer_name,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from collections import namedtuple
-                Debt = namedtuple("Debt", ["customer_name", "amount"])
-                return Debt(*row)
-            return None
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT customer_name, amount FROM debts WHERE customer_name = %s", (customer_name,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if row:
+        Debt = namedtuple("Debt", ["customer_name", "amount"])
+        return Debt(row['customer_name'], row['amount'])
+    return None
 
 async def get_all_debts():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT customer_name, amount FROM debts WHERE amount > 0 ORDER BY amount DESC") as cursor:
-            rows = await cursor.fetchall()
-            from collections import namedtuple
-            Debt = namedtuple("Debt", ["customer_name", "amount"])
-            return [Debt(*row) for row in rows]
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT customer_name, amount FROM debts WHERE amount > 0 ORDER BY amount DESC")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    Debt = namedtuple("Debt", ["customer_name", "amount"])
+    return [Debt(row['customer_name'], row['amount']) for row in rows]
 
 async def update_debt(customer_name: str, amount: float):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO debts (customer_name, amount) VALUES (?, ?)
-            ON CONFLICT(customer_name) DO UPDATE SET amount = ?
-        """, (customer_name, amount, amount))
-        await db.commit()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO debts (customer_name, amount) VALUES (%s, %s)
+        ON CONFLICT(customer_name) DO UPDATE SET amount = %s
+    """, (customer_name, amount, amount))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 async def log_sale(customer: str, product: str, quantity: int, price: float, discount_applied: float, total: float, payment_type: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO sales (customer, product, quantity, price, discount_applied, total, payment_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (customer, product, quantity, price, discount_applied, total, payment_type))
-        await db.commit()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO sales (customer, product, quantity, price, discount_applied, total, payment_type)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (customer, product, quantity, price, discount_applied, total, payment_type))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 async def get_sale_logs():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp FROM sales ORDER BY id DESC") as cursor:
-            return await cursor.fetchall()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp FROM sales ORDER BY id DESC")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [[r['customer'], r['product'], r['quantity'], r['price'], r['discount_applied'], r['total'], r['payment_type'], r['timestamp']] for r in rows]
 
 async def get_sale_logs_by_period(days: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            """SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp 
-               FROM sales 
-               WHERE timestamp >= datetime('now', ? || ' days', 'localtime')
-               ORDER BY id DESC""",
-            (f"-{days}",)
-        ) as cursor:
-            return await cursor.fetchall()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp 
+           FROM sales 
+           WHERE timestamp >= NOW() - INTERVAL '{days} days'
+           ORDER BY id DESC"""
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [[r['customer'], r['product'], r['quantity'], r['price'], r['discount_applied'], r['total'], r['payment_type'], r['timestamp']] for r in rows]
 
 async def get_sale_logs_today():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            """SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp 
-               FROM sales 
-               WHERE date(timestamp) = date('now', 'localtime')
-               ORDER BY id DESC"""
-        ) as cursor:
-            return await cursor.fetchall()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp 
+           FROM sales 
+           WHERE timestamp >= CURRENT_DATE
+           ORDER BY id DESC"""
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [[r['customer'], r['product'], r['quantity'], r['price'], r['discount_applied'], r['total'], r['payment_type'], r['timestamp']] for r in rows]
