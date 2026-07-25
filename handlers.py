@@ -41,7 +41,6 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             await update.message.reply_text(f"❌ Омборда етарли маҳсулот йўқ. Хозирча: {product.quantity} шт.")
             return
 
-        # Скидка / Чегирмани ҳисоблаш
         orig_price = product.price
         subtotal = orig_price * quantity
         
@@ -53,12 +52,11 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         elif disc_amount > 0:
             total_discount = disc_amount
         else:
-            total_discount = subtotal * (product.discount / 100)  # Стандарт скидка
+            total_discount = subtotal * (product.discount / 100)
 
         final_total = max(0, subtotal - total_discount)
         new_qty = product.quantity - quantity
 
-        # Базани янгилаш
         await update_product_quantity(product.name, new_qty)
         await add_customer(customer_name)
 
@@ -113,11 +111,10 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             f"🤖 **AI Қарз тўлови:**\n👤 {c_name}\n💵 Тўланди: {format_currency(amt)}\n💰 Қолдиқ қарз: {format_currency(new_amt)}",
             reply_markup=main_menu_keyboard()
         )
-
     else:
         await update.message.reply_text("❌ Амал аниқланмади. Текшириб қайтадан ёзинг.")
 
-# --- ТУГМАЛАР ОРҚАЛИ КЕТМА-КЕТЛИК (FSM) ---
+# --- ТУГМАЛАР ОРҚАЛИ КЕТМА-КЕТЛИК (FSM) ЖАРАЁНИ ---
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "add_product"
@@ -129,10 +126,16 @@ async def add_product_finish(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"✅ **{name}** базага қўшилди.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
     context.user_data.clear()
 
+# 1-УСУЛ БЎЙИЧА ҚИДИРУВ БОШЛАНИШИ (Омборга кирим)
 async def incoming_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
-    context.user_data["action"] = "incoming"
-    await update.message.reply_text("Кирим қилинадиган дорини танланг:", reply_markup=await product_inline_keyboard())
+    context.user_data["action"] = "search_incoming_product"
+    await update.message.reply_text(
+        "📥 **Омборга кирим қилиш**\n\n"
+        "Илтимос, кирим қилинадиган дори номининг камида **2-3 та ҳарфини** ёзиб юборинг:",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard()
+    )
 
 async def incoming_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.text.isdigit():
@@ -143,13 +146,19 @@ async def incoming_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prod = await get_product(p_name)
     if prod:
         await update_product_quantity(p_name, prod.quantity + qty)
-        await update.message.reply_text(f"✅ **{p_name}** омборга +{qty} шт қўшилди.", reply_markup=main_menu_keyboard())
+        await update.message.reply_text(f"✅ **{p_name}** омборга +{qty} шт қўшилди.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
     context.user_data.clear()
 
+# 1-УСУЛ БЎЙИЧА ҚИДИРУВ БОШЛАНИШИ (Сотув қилиш)
 async def sell_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
-    context.user_data["action"] = "sell"
-    await update.message.reply_text("🛒 Сотиладиган дорини танланг:", reply_markup=await product_inline_keyboard())
+    context.user_data["action"] = "search_sell_product"
+    await update.message.reply_text(
+        "🛒 **Сотув қилиш**\n\n"
+        "Илтимос, сотиладиган дори номининг камида **2-3 та ҳарфини** ёзиб юборинг:",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard()
+    )
 
 async def sell_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.text.isdigit():
@@ -203,7 +212,7 @@ async def sell_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def config_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "config"
-    await update.message.reply_text("Созланадиган дорини танланг:", reply_markup=await product_inline_keyboard())
+    await update.message.reply_text("Созланадиган дори номининг камида 2-3 та ҳарфини ёзинг:", reply_markup=back_keyboard())
 
 async def config_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.text.isdigit(): return
@@ -315,6 +324,27 @@ async def list_customers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i in range(0, len(text), MAX_LENGTH):
             await update.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
 
+# Матнли хабарларни ушлаб қидирувни амалга оширувчи функция (bot.py ёки handlers.py га боғланувчи)
+async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    act = context.user_data.get("action")
+    text = update.message.text.strip()
+
+    if act == "search_incoming_product":
+        if len(text) < 2:
+            await update.message.reply_text("⚠️ Илтимос, камида 2-3 та ҳарф киритинг:")
+            return
+        keyboard = await search_product_inline_keyboard(text)
+        await update.message.reply_text("🔍 Мос келувчи дорилар:", reply_markup=keyboard)
+        return
+
+    if act == "search_sell_product":
+        if len(text) < 2:
+            await update.message.reply_text("⚠️ Илтимос, камида 2-3 та ҳарф киритинг:")
+            return
+        keyboard = await search_product_inline_keyboard(text)
+        await update.message.reply_text("🔍 Мос келувчи дорилар:", reply_markup=keyboard)
+        return
+
 # Inline тугмаларни ушлаш
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -325,17 +355,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     act = context.user_data.get("action")
-    if act == "incoming" and query.data.startswith("prod_"):
+    
+    # Қидирувдан кейин танланган дорини қабул қилиш (Кирим учун)
+    if act == "search_incoming_product" and query.data.startswith("prod_"):
         p = query.data.replace("prod_", "")
         context.user_data["incoming_product"] = p
-        await query.message.reply_text(f"📥 **{p}** неча дона келди?", reply_markup=back_keyboard())
+        context.user_data["action"] = "incoming_qty"
+        await query.message.reply_text(f"📥 **{p}** неча дона келди (сонини киритинг)?", reply_markup=back_keyboard())
 
-    elif act == "sell":
+    # Қидирувдан кейин танланган дорини қабул қилиш (Сотув учун)
+    elif act == "search_sell_product":
         if query.data.startswith("prod_"):
             context.user_data["sell_product"] = query.data.replace("prod_", "")
+            context.user_data["action"] = "sell_cust"
             await query.message.reply_text("👤 Мижозни танланг:", reply_markup=await customer_inline_keyboard())
-        elif query.data.startswith("cust_"):
+        elif query.data.startswith("cust_") and context.user_data.get("action") == "sell_cust":
             context.user_data["sell_customer"] = query.data.replace("cust_", "")
+            context.user_data["action"] = "sell_qty"
             await query.message.reply_text("🔢 Нечта сотилмоқда (сонини киритинг)?", reply_markup=back_keyboard())
 
     elif act == "pay_debt" and query.data.startswith("cust_"):
