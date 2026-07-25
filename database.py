@@ -1,194 +1,157 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
-from sqlalchemy import select, update, delete, text
-from sqlalchemy.exc import SQLAlchemyError
-import logging
+import aiosqlite
+import os
 
-from config import DATABASE_URL
-from models import Base, Product, Customer, Debt, SaleLog
-
-logger = logging.getLogger(__name__)
-
-engine = create_async_engine(
-    DATABASE_URL, 
-    echo=False, 
-    poolclass=NullPool,
-    pool_pre_ping=True
-)
-async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+DB_PATH = "vetguard.db"
 
 async def init_db():
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # --- Устун етишмаслиги хатосини олдини олиш учун қўшилди ---
-            try:
-                await conn.execute(
-                    text("ALTER TABLE sale_logs ADD COLUMN IF NOT EXISTS original_price FLOAT DEFAULT 0.0;")
-                )
-            except Exception as e:
-                pass
-            # ------------------------------------------------------------
-        logger.info("✅ База муваффақиятли ишга тушди ва жадваллар яратилди")
-    except SQLAlchemyError as e:
-        logger.error(f"❌ Database initialization error: {e}")
-        raise
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Дорилар жадвали
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE,
+                quantity INTEGER DEFAULT 0,
+                price REAL DEFAULT 0,
+                discount REAL DEFAULT 0
+            )
+        """)
+        # Мижозлар жадвали
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE
+            )
+        """)
+        # Қарздорлар жадвали
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS debts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_name TEXT UNIQUE,
+                amount REAL DEFAULT 0
+            )
+        """)
+        # Сотувлар тарихи жадвали
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS sales (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer TEXT,
+                product TEXT,
+                quantity INTEGER,
+                price REAL,
+                discount_applied REAL,
+                total REAL,
+                payment_type TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
 
-# --- ДОРИЛАР БОШҚАРУВИ ---
 async def get_product(name: str):
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(Product).where(Product.name.ilike(name.strip())))
-            return result.scalar_one_or_none()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ get_product error: {e}")
-        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT name, quantity, price, discount FROM products WHERE name = ?", (name,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                from collections import namedtuple
+                Product = namedtuple("Product", ["name", "quantity", "price", "discount"])
+                return Product(*row)
+            return None
 
 async def get_all_products():
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(Product).order_by(Product.name))
-            return result.scalars().all()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ get_all_products error: {e}")
-        return []
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT name, quantity, price, discount FROM products ORDER BY name") as cursor:
+            rows = await cursor.fetchall()
+            from collections import namedtuple
+            Product = namedtuple("Product", ["name", "quantity", "price", "discount"])
+            return [Product(*row) for row in rows]
 
-async def add_product(name: str, quantity: int = 0, price: float = 0.0, discount: float = 0.0):
-    try:
-        async with async_session() as session:
-            existing = await get_product(name)
-            if existing:
-                return existing
-            product = Product(name=name.strip(), quantity=quantity, price=price, discount=discount)
-            session.add(product)
-            await session.commit()
-            return product
-    except SQLAlchemyError as e:
-        logger.error(f"❌ add_product error: {e}")
-        raise
+async def add_product(name: str, quantity: int = 0, price: float = 0, discount: float = 0):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO products (name, quantity, price, discount) 
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET quantity = quantity + ?
+        """, (name, quantity, price, discount, quantity))
+        await db.commit()
 
-async def update_product_quantity(name: str, new_quantity: int):
-    try:
-        if new_quantity < 0:
-            new_quantity = 0
-        async with async_session() as session:
-            await session.execute(
-                update(Product).where(Product.name.ilike(name.strip())).values(quantity=new_quantity)
-            )
-            await session.commit()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ update_product_quantity error: {e}")
-        raise
+async def update_product_quantity(name: str, quantity: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE products SET quantity = ? WHERE name = ?", (quantity, name))
+        await db.commit()
 
 async def update_product_details(name: str, price: float, discount: float):
-    try:
-        async with async_session() as session:
-            await session.execute(
-                update(Product).where(Product.name.ilike(name.strip())).values(price=price, discount=discount)
-            )
-            await session.commit()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ update_product_details error: {e}")
-        raise
-
-# --- МИЖОЗЛАР БОШҚАРУВИ ---
-async def get_customer(name: str):
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(Customer).where(Customer.name.ilike(name.strip())))
-            return result.scalar_one_or_none()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ get_customer error: {e}")
-        return None
-
-async def get_all_customers():
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(Customer).order_by(Customer.name))
-            return result.scalars().all()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ get_all_customers error: {e}")
-        return []
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE products SET price = ?, discount = ? WHERE name = ?", (price, discount, name))
+        await db.commit()
 
 async def add_customer(name: str):
-    try:
-        async with async_session() as session:
-            existing = await get_customer(name)
-            if existing:
-                return existing
-            customer = Customer(name=name.strip())
-            session.add(customer)
-            await session.commit()
-            return customer
-    except SQLAlchemyError as e:
-        logger.error(f"❌ add_customer error: {e}")
-        raise
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO customers (name) VALUES (?)", (name,))
+        await db.commit()
 
-# --- ҚАРЗЛАР БОШҚАРУВИ ---
+async def get_all_customers():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT name FROM customers ORDER BY name") as cursor:
+            rows = await cursor.fetchall()
+            from collections import namedtuple
+            Customer = namedtuple("Customer", ["name"])
+            return [Customer(*row) for row in rows]
+
 async def get_debt(customer_name: str):
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(Debt).where(Debt.customer_name.ilike(customer_name.strip())))
-            return result.scalar_one_or_none()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ get_debt error: {e}")
-        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT customer_name, amount FROM debts WHERE customer_name = ?", (customer_name,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                from collections import namedtuple
+                Debt = namedtuple("Debt", ["customer_name", "amount"])
+                return Debt(*row)
+            return None
 
 async def get_all_debts():
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(Debt).where(Debt.amount > 0))
-            return result.scalars().all()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ get_all_debts error: {e}")
-        return []
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT customer_name, amount FROM debts WHERE amount > 0 ORDER BY amount DESC") as cursor:
+            rows = await cursor.fetchall()
+            from collections import namedtuple
+            Debt = namedtuple("Debt", ["customer_name", "amount"])
+            return [Debt(*row) for row in rows]
 
-async def update_debt(customer_name: str, new_amount: float):
-    try:
-        customer_name = customer_name.strip()
-        async with async_session() as session:
-            if new_amount <= 0:
-                await session.execute(delete(Debt).where(Debt.customer_name.ilike(customer_name)))
-            else:
-                result = await session.execute(select(Debt).where(Debt.customer_name.ilike(customer_name)))
-                debt = result.scalar_one_or_none()
-                if debt:
-                    await session.execute(update(Debt).where(Debt.customer_name.ilike(customer_name)).values(amount=new_amount))
-                else:
-                    new_debt = Debt(customer_name=customer_name, amount=new_amount)
-                    session.add(new_debt)
-            await session.commit()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ update_debt error: {e}")
-        raise
+async def update_debt(customer_name: str, amount: float):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO debts (customer_name, amount) VALUES (?, ?)
+            ON CONFLICT(customer_name) DO UPDATE SET amount = ?
+        """, (customer_name, amount, amount))
+        await db.commit()
 
-# --- СОТУВ ЛОГЛАРИ ---
-async def log_sale(customer: str, product: str, quantity: int, original_price: float, discount_applied: float, total: float, payment_type: str):
-    try:
-        async with async_session() as session:
-            from datetime import datetime
-            log = SaleLog(
-                customer=customer.strip(),
-                product=product.strip(),
-                quantity=quantity,
-                original_price=original_price,
-                discount_applied=discount_applied,
-                total=total,
-                payment_type=payment_type,
-                timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
-            session.add(log)
-            await session.commit()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ log_sale error: {e}")
-        raise
+async def log_sale(customer: str, product: str, quantity: int, price: float, discount_applied: float, total: float, payment_type: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO sales (customer, product, quantity, price, discount_applied, total, payment_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (customer, product, quantity, price, discount_applied, total, payment_type))
+        await db.commit()
 
-async def get_sale_logs(limit: int = 50):
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(SaleLog).order_by(SaleLog.id.desc()).limit(limit))
-            return result.scalars().all()
-    except SQLAlchemyError as e:
-        logger.error(f"❌ get_sale_logs error: {e}")
-        return []
+async def get_sale_logs():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp FROM sales ORDER BY id DESC") as cursor:
+            return await cursor.fetchall()
+
+async def get_sale_logs_by_period(days: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp 
+               FROM sales 
+               WHERE timestamp >= datetime('now', ? || ' days', 'localtime')
+               ORDER BY id DESC""",
+            (f"-{days}",)
+        ) as cursor:
+            return await cursor.fetchall()
+
+async def get_sale_logs_today():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp 
+               FROM sales 
+               WHERE date(timestamp) = date('now', 'localtime')
+               ORDER BY id DESC"""
+        ) as cursor:
+            return await cursor.fetchall()
