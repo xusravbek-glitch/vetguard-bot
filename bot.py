@@ -118,11 +118,10 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await sell_finish(update, context)
     elif action == "pay_debt":
         await pay_debt_finish(update, context)
-    elif action == "config":
-        if "config_price" not in context.user_data:
-            await config_price(update, context)
-        else:
-            await config_discount(update, context)
+    elif action == "config_await_price":
+        await config_price(update, context)
+    elif action == "config_await_discount":
+        await config_discount(update, context)
     elif action == "add_customer":
         await add_customer_finish(update, context)
 
