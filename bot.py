@@ -95,3 +95,61 @@ def main():
 
 if __name__ == "__main__":
     main()
+    import requests
+import base64
+import os
+from telegram.ext import MessageHandler, filters
+from config import DEEPSEEK_API_KEY  # .env дан оламиз
+
+# DeepSeek Vision API га сўров юбориш
+async def analyze_image_with_deepseek(image_file):
+    # 1. Расмни база64 га айлантирамиз
+    image_bytes = await image_file.download_as_bytearray()
+    base64_image = base64.b64encode(image_bytes).decode('utf-8')
+    
+    # 2. DeepSeek Vision API (Chat) га юбориш
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "deepseek-vision",  # DeepSeek Vision модели
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Бу расмда нима ёзилган? Дори номи ва сонини топиб, JSON форматда қайтар: {'name': '...', 'quantity': ...}"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                ]
+            }
+        ]
+    }
+    response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload)
+    return response.json()
+
+# Telegram расм ҳабарларини ушловчи функция
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    
+    await update.message.reply_text("📸 DeepSeek расмни таҳлил қилмоқда...")
+    
+    # Энг катта расмни олиш
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    
+    # DeepSeek га юбориш
+    result = await analyze_image_with_deepseek(file)
+    
+    # Жавобни таҳлил қилиш
+    try:
+        content = result["choices"][0]["message"]["content"]
+        await update.message.reply_text(f"✅ DeepSeek натижаси:\n\n{content}")
+        
+        # Қўшимча: Агар JSON қайтса, базага ёзиш ёки сотиш мумкин!
+        # ... (бу ерда SQL га ёзиш коди бўлиши мумкин)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Xatolik: {e}")
+
+# bot.py даги main() ичига қўшинг:
+application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
