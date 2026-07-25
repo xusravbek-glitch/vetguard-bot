@@ -184,3 +184,11 @@ async def get_sale_logs(limit: int = 50):
     except SQLAlchemyError as e:
         logger.error(f"❌ get_sale_logs error: {e}")
         return []
+# database.py файлингиз охирига қўшинг:
+from sqlalchemy import text
+
+async def fix_missing_columns():
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("ALTER TABLE sale_logs ADD COLUMN IF NOT EXISTS original_price FLOAT DEFAULT 0.0;")
+        )
