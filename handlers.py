@@ -246,7 +246,12 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for p in products:
         st = "🔴" if p.quantity <= LOW_STOCK_LIMIT else "🟢"
         text += f"{st} **{p.name}** — {p.quantity} шт | {format_currency(p.price)} (Скидка: {p.discount}%)\n"
+    MAX_LENGTH = 4000
+if len(text) <= MAX_LENGTH:
     await update.message.reply_text(text, parse_mode="Markdown")
+else:
+    for i in range(0, len(text), MAX_LENGTH):
+        await update.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
 
 async def show_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
@@ -257,7 +262,12 @@ async def show_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "💰 **Насия ва Қарздорлар рўйхати:**\n\n"
     for d in debts:
         text += f"👤 **{d.customer_name}**: {format_currency(d.amount)}\n"
+    MAX_LENGTH = 4000
+if len(text) <= MAX_LENGTH:
     await update.message.reply_text(text, parse_mode="Markdown")
+else:
+    for i in range(0, len(text), MAX_LENGTH):
+        await update.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
 
 async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
@@ -295,7 +305,12 @@ async def list_customers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📋 **Рўйхатдаги мижозлар:**\n\n"
     for c in customers:
         text += f"• {c.name}\n"
+    MAX_LENGTH = 4000
+if len(text) <= MAX_LENGTH:
     await update.message.reply_text(text, parse_mode="Markdown")
+else:
+    for i in range(0, len(text), MAX_LENGTH):
+        await update.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
 
 # Inline тугмаларни ушлаш
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
