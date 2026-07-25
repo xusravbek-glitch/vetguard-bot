@@ -145,7 +145,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 Бу ботдан фойдаланиш учун сизга рухсат берилмаган.")
         return
 
-    status_msg = await update.message.reply_text("📸 *AI расмни (накладнаяни) ўқиб таҳлил қилмоқда...*", parse_mode="Markdown")
+    # Расм келганда FSM ҳолатини тозалаймиз, токи қидирув ёки бошқа амалда қолиб кетмасин
+    context.user_data.clear()
+
+    status_msg = await update.message.reply_text("📸 *AI расмни ўқиб таҳлил қилмоқда...*", parse_mode="Markdown")
     try:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
@@ -155,7 +158,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_ai_action(update, context, ai_data)
     except Exception as e:
         logger.error(f"Photo processing error: {e}")
-        await update.message.reply_text("❌ Накладная суратини таҳлил қилишда хатолик юз берди.")
+        await update.message.reply_text("❌ Расмни таҳлил қилишда хатолик юз берди.")
     finally:
         try:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=status_msg.message_id)
