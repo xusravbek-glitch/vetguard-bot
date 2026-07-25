@@ -354,27 +354,32 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     act = context.user_data.get("action")
     
+    # 1. Омборга кирим учун дори танланганда
     if act == "search_incoming_product" and query.data.startswith("prod_"):
         p = query.data.replace("prod_", "")
         context.user_data["incoming_product"] = p
         context.user_data["action"] = "incoming"
-        await query.message.reply_text(f"📥 **{p}** неча дона келди (сонини киритинг)?", reply_markup=back_keyboard())
+        await query.message.reply_text(f"📥 **{p}** неча дона келди (сонини киритинг)?", reply_markup=back_keyboard(), parse_mode="Markdown")
 
-    elif act == "search_sell_product":
-        if query.data.startswith("prod_"):
-            context.user_data["sell_product"] = query.data.replace("prod_", "")
-            context.user_data["action"] = "sell_cust"
-            await query.message.reply_text("👤 Мижозни танланг:", reply_markup=await customer_inline_keyboard())
-        elif query.data.startswith("cust_") and context.user_data.get("action") == "sell_cust":
-            context.user_data["sell_customer"] = query.data.replace("cust_", "")
-            context.user_data["action"] = "sell"
-            await query.message.reply_text("🔢 Нечта сотилмоқда (сонини киритинг)?", reply_markup=back_keyboard())
+    # 2. Сотув учун дори танланганда
+    elif act == "search_sell_product" and query.data.startswith("prod_"):
+        context.user_data["sell_product"] = query.data.replace("prod_", "")
+        context.user_data["action"] = "sell_cust"
+        await query.message.reply_text("👤 Мижозни танланг:", reply_markup=await customer_inline_keyboard())
 
+    # 3. Сотув учун мижоз танланганда
+    elif act == "sell_cust" and query.data.startswith("cust_"):
+        context.user_data["sell_customer"] = query.data.replace("cust_", "")
+        context.user_data["action"] = "sell"
+        await query.message.reply_text("🔢 Нечта сотилмоқда (сонини киритинг)?", reply_markup=back_keyboard())
+
+    # 4. Қарз тўлаш учун мижоз танланганда
     elif act == "pay_debt" and query.data.startswith("cust_"):
         c = query.data.replace("cust_", "")
         context.user_data["pay_debt_customer"] = c
-        await query.message.reply_text(f"💵 **{c}** қанча сумма тўламоқда?", reply_markup=back_keyboard())
+        await query.message.reply_text(f"💵 **{c}** қанча сумма тўламоқда?", reply_markup=back_keyboard(), parse_mode="Markdown")
 
+    # 5. Дори нархини созлаш учун дори танланганда
     elif act == "config" and query.data.startswith("prod_"):
         p = query.data.replace("prod_", "")
         context.user_data["config_product"] = p
