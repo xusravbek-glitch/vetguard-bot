@@ -1,14 +1,18 @@
-import requests
+import os
 import json
-import base64
 import logging
-from config import DEEPSEEK_API_KEY
+import google.generativeai as genai
+from config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
 
+# Gemini API ни созлаш
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
 SYSTEM_PROMPT = """
 Сиз ветеринария аптекаси ва омбори учун AI ERP ёрдамчисисиз.
-Фойдаланувчи юборган эркин матн ёки расмдан (юклама, чек, қўлёзма) амални аниқлаб, фақат ва фақат JSON форматида қайтаринг.
+Фойдаланувчи юборган эркин матн ёки расмдан (юклама, чек, қўлёзма) амални аниқлаб, фақат ва фақат JSON форматида қайтаринг. Ҳеч қандай қўшимча матн ёзманг.
 
 Операция турлари (action):
 1. "sell" - Сотиш (Скидка/чегирма бўлиши мумкин)
@@ -32,66 +36,56 @@ JSON структураси:
 """
 
 async def process_text_with_ai(text: str) -> dict:
-    if not DEEPSEEK_API_KEY:
+    if not GEMINI_API_KEY:
         return {"action": "unknown"}
 
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": text}
-        ],
-        "response_format": {"type": "json_object"}
-    }
-
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=20)
-        if response.status_code == 200:
-            res_content = response.json()["choices"][0]["message"]["content"]
-            return json.loads(res_content)
-        else:
-            logger.error(f"AI Text API Error: {response.status_code} - {response.text}")
-            return {"action": "unknown"}
+        # Gemini 1.5 Flash моделини ишлатамиз (жуда тез ва аниқ)
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=SYSTEM_PROMPT
+        )
+        response = model.generate_content(text)
+        
+        # JSON форматини тозалаб олиш
+        res_text = response.text.strip()
+        if res_text.startswith("```json"):
+            res_text = res_text[7:]
+        if res_text.endswith("```"):
+            res_text = res_text[:-3]
+            
+        return json.loads(res_text.strip())
     except Exception as e:
-        logger.error(f"AI Text Exception: {e}")
+        logger.error(f"Gemini Text Exception: {e}")
         return {"action": "unknown"}
 
 async def process_image_with_ai(image_bytes: bytearray) -> dict:
-    if not DEEPSEEK_API_KEY:
+    if not GEMINI_API_KEY:
         return {"action": "unknown"}
 
-    base64_image = base64.b64encode(image_bytes).decode('utf-8')
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user", 
-                "content": f"Ушбу хужжат/чек ёки қўлёзма суратини аниқланг ва JSON қайтаринг: data:image/jpeg;base64,{base64_image}"
-            }
-        ]
-    }
-
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=30)
-        if response.status_code == 200:
-            res_content = response.json()["choices"][0]["message"]["content"]
-            start_idx = res_content.find('{')
-            end_idx = res_content.rfind('}') + 1
-            if start_idx != -1 and end_idx != -1:
-                return json.loads(res_content[start_idx:end_idx])
-            return json.loads(res_content)
-        else:
-            logger.error(f"AI Image API Error: {response.status_code} - {response.text}")
-            return {"action": "unknown"}
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=SYSTEM_PROMPT
+        )
+        
+        image_part = {
+            "mime_type": "image/jpeg",
+            "data": image_bytes
+        }
+        
+        response = model.generate_content([
+            image_part,
+            "Ушбу ҳужжат, чек ёки қўлёзма суратини таҳлил қилиб, белгиланган форматда JSON қайтаринг."
+        ])
+        
+        res_text = response.text.strip()
+        if res_text.startswith("```json"):
+            res_text = res_text[7:]
+        if res_text.endswith("```"):
+            res_text = res_text[:-3]
+            
+        return json.loads(res_text.strip())
     except Exception as e:
-        logger.error(f"AI Image Exception: {e}")
+        logger.error(f"Gemini Image Exception: {e}")
         return {"action": "unknown"}
