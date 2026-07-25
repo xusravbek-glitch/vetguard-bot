@@ -33,7 +33,8 @@ from handlers import (
     add_customer_start,
     show_logs,
     handle_callback,
-    process_ai_action  # AI натижаларини қайта ишловчи функция
+    process_ai_action,
+    handle_search_text # <-- Қидирув функциясини улаймиз
 )
 from utils import is_admin
 from ai_service import process_text_with_ai, process_image_with_ai
@@ -64,33 +65,49 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "🛒 Сотув қилиш":
         context.user_data.clear()
         await sell_start(update, context)
+        return
     elif text == "📥 Омборга кирим":
         context.user_data.clear()
         await incoming_start(update, context)
+        return
     elif text == "📦 Омбор қолдиғи":
         await inventory(update, context)
+        return
     elif text == "💰 Қарздорлар рўйхати":
         await show_debts(update, context)
+        return
     elif text == "💸 Қарзни узиш":
         context.user_data.clear()
         await pay_debt_start(update, context)
+        return
     elif text == "🏷 Дори нарх/скидка созлаш":
         context.user_data.clear()
         await config_start(update, context)
+        return
     elif text == "➕ Янги дори қўшиш":
         context.user_data.clear()
         await add_product_start(update, context)
+        return
     elif text == "👤 Мижозлар бўлими":
         await customers_menu(update, context)
+        return
     elif text == "📋 Барча мижозлар":
         await list_customers(update, context)
+        return
     elif text == "👤 Янги мижоз қўшиш":
         context.user_data.clear()
         await add_customer_start(update, context)
+        return
     elif text == "📜 Сотувлар тарихи":
         await show_logs(update, context)
+        return
 
-    # 2. FSM ҲОЛАТЛАРИ (Матнли қадамма-қадам киритишлар)
+    # 2. ДОРИ ҚИДИРУВ ҲОЛАТЛАРИ (Янги қўшилган қисм)
+    if action in ["search_incoming_product", "search_sell_product"]:
+        await handle_search_text(update, context)
+        return
+
+    # 3. БОШҚА FSM ҲОЛАТЛАРИ (Матнли қадамма-қадам киритишлар)
     elif action == "add_product":
         await add_product_finish(update, context)
     elif action == "incoming":
@@ -112,7 +129,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "add_customer":
         await add_customer_finish(update, context)
 
-    # 3. ЭРКИН МАТНЛАР -> AI ОРҚАЛИ ТАҲЛИЛ
+    # 4. ЭРКИН МАТНЛАР -> AI ОРҚАЛИ ТАҲЛИЛ
     else:
         status_msg = await update.message.reply_text("🤖 *AI таҳлил қилмоқда...*", parse_mode="Markdown")
         try:
@@ -120,9 +137,8 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await process_ai_action(update, context, ai_data)
         except Exception as e:
             logger.error(f"AI Text Error: {e}")
-            await update.message.reply_text("❌ Мaълумотни қайта ишлашда хатолик бўлди.")
+            await update.message.reply_text("❌ Маълумотни қайта ишлашда хатолик бўлди.")
         finally:
-            # "AI таҳлил қилмоқда..." хабарини ўчириб ташлаш (чалкашлик бўлмаслиги учун)
             try:
                 await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=status_msg.message_id)
             except Exception:
