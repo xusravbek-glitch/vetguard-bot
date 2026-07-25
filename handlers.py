@@ -1,4 +1,4 @@
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database import *
 from keyboards import *
@@ -18,7 +18,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# --- AI БУЙРУҚЛАРИНИ ИЖРО ЭТИШ (СКИДКА БИЛАН) ---
 async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, ai_data: dict):
     action = ai_data.get("action")
     
@@ -38,7 +37,7 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             return
 
         if product.quantity < quantity:
-            await update.message.reply_text(f"❌ Омборда етарли маҳсулот йўқ. Хозирча: {product.quantity} шт.")
+            await update.message.reply_text(f"❌ Омборда етарли маҳсулот йўқ. Ҳозирча: {product.quantity} шт.")
             return
 
         orig_price = product.price
@@ -114,7 +113,6 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     else:
         await update.message.reply_text("❌ Амал аниқланмади. Текшириб қайтадан ёзинг.")
 
-# --- ТУГМАЛАР ОРҚАЛИ КЕТМА-КЕТЛИК (FSM) ЖАРАЁНИ ---
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "add_product"
@@ -177,16 +175,22 @@ async def sell_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if payment not in ["💵 Нақд тўлов", "💳 Насия (Қарзга)"]: return
 
     p_name = context.user_data.get("sell_product")
-    c_name = context.user_data.get("sell_customer")
-    qty = context.user_data.get("sell_quantity")
+    c_name = context.user_data.get("sell_customer") or "Умумий харидор"
+    qty = context.user_data.get("sell_quantity", 1)
     discount = context.user_data.get("sell_discount", 0)
 
     product = await get_product(p_name)
+    if not product:
+        await update.message.reply_text("❌ Дори топилмади.", reply_markup=main_menu_keyboard())
+        context.user_data.clear()
+        return
+
     subtotal = product.price * qty
     final_total = max(0, subtotal - discount)
     new_qty = product.quantity - qty
 
     await update_product_quantity(p_name, new_qty)
+    await add_customer(c_name)
     
     if payment == "💳 Насия (Қарзга)":
         debt = await get_debt(c_name)
@@ -196,12 +200,12 @@ async def sell_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await log_sale(c_name, p_name, qty, product.price, discount, final_total, payment)
 
     msg = (
-        f"✅ **Сотув якунланди!**\n\n"
+        f"✅ **Сотув муваффақиятли якунланди!**\n\n"
         f"📦 Дори: {p_name}\n"
         f"👤 Мижоз: {c_name}\n"
         f"🔢 Сон: {qty} шт\n"
         f"🏷 Чегирма: {format_currency(discount)}\n"
-        f"💵 Топшириладиган сумма: **{format_currency(final_total)}**\n"
+        f"💵 Якуний сумма: **{format_currency(final_total)}**\n"
         f"💳 Тўлов: {payment}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu_keyboard())
@@ -285,21 +289,20 @@ async def show_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
-    logs = await get_sale_logs()
-    if not logs:
-        await update.message.reply_text("📜 Ҳозирча сотувлар тарихи бўш (сотув амалга оширилмаган).")
-        return
     
-    text = "📜 **Сўнгги сотувлар тарихи:**\n\n"
-    for l in logs:
-        text += f"⏱ [{l.timestamp}]\n👤 {l.customer} | 📦 {l.product} x{l.quantity} шт\n🏷 Чегирма: {format_currency(l.discount_applied)} | 💵 Сумма: {format_currency(l.total)} ({l.payment_type})\n---\n"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 Бугунги", callback_data="logs_today"),
+         InlineKeyboardButton("📅 Охирги 7 кун", callback_data="logs_7")],
+        [InlineKeyboardButton("📅 Охирги 30 кун", callback_data="logs_30"),
+         InlineKeyboardButton("📅 Барчаси", callback_data="logs_all")],
+        [InlineKeyboardButton("⬅️ Орқага", callback_data="back_main")]
+    ])
     
-    MAX_LENGTH = 4000
-    if len(text) <= MAX_LENGTH:
-        await update.message.reply_text(text, parse_mode="Markdown")
-    else:
-        for i in range(0, len(text), MAX_LENGTH):
-            await update.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
+    await update.message.reply_text(
+        "📜 **Сотувлар тарихини кўриш учун даврни танланг:**",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
 
 async def customers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
@@ -351,6 +354,40 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "back_main":
         await start(update, context)
+        return
+
+    # Сотувлар тарихи даврларини фильтрлаш
+    if query.data.startswith("logs_"):
+        period = query.data.replace("logs_", "")
+        
+        if period == "all":
+            logs = await get_sale_logs()
+            title = "📜 **Барча сотувлар тарихи:**"
+        elif period == "today":
+            logs = await get_sale_logs_today()
+            title = "📜 **Бугунги сотувлар тарихи:**"
+        else:
+            days = int(period)
+            logs = await get_sale_logs_by_period(days)
+            title = f"📜 **Охирги {days} кундаги сотувлар тарихи:**"
+            
+        if not logs:
+            await query.message.edit_text("❌ Бу давр мобайнида сотувлар амалга оширилмаган.", reply_markup=main_menu_keyboard())
+            return
+            
+        total_sum = sum(l[5] for l in logs)
+        text = f"{title}\n💵 Жами сумма: **{format_currency(total_sum)}**\n\n"
+        
+        for l in logs:
+            customer, product, qty, price, discount, total, payment, timestamp = l
+            text += f"⏱ [{timestamp}]\n👤 {customer} | 📦 {product} x{qty} шт\n🏷 Чегирма: {format_currency(discount)} | 💵 Сумма: {format_currency(total)} ({payment})\n---\n"
+            
+        MAX_LENGTH = 4000
+        if len(text) <= MAX_LENGTH:
+            await query.message.edit_text(text, parse_mode="Markdown")
+        else:
+            for i in range(0, len(text), MAX_LENGTH):
+                await query.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
         return
 
     act = context.user_data.get("action")
