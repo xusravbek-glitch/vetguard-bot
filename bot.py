@@ -22,12 +22,12 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     action = context.user_data.get("action")
     
-    # Орқага қайтиш
+    # 1. Орқага қайтиш
     if text == "⬅️ Орқага":
         await start(update, context)
         return
 
-    # Action бўйича йўналтириш
+    # 2. Агар action бўлса, унинг функциясини ишлатамиз
     if action == "add_product":
         await add_product_finish(update, context)
     elif action == "incoming":
@@ -46,9 +46,10 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await config_discount(update, context)
     elif action == "add_customer":
         await add_customer_finish(update, context)
+    
+    # 3. Агар action топилмаса, демак бу асосий меню тугмаси
+    # Бу ерда барча меню тугмаларини текширамиз ва уларни ишга туширамиз!
     else:
-        # БУ ЕРДА "НОМАЪЛУМ КОМАНДА" ХАТОСИ ТУЗАТИЛДИ:
-        # Агар action топилмаса, лекин текст меню тугмаси бўлса, уни ишлатамиз
         if text == "➕ Келди":
             await incoming_start(update, context)
         elif text == "➖ Сотиш":
@@ -67,7 +68,10 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await add_product_start(update, context)
         elif text == "📜 Умумий тарих":
             await show_logs(update, context)
+        elif text == "👤 Янги мижоз қўшиш":
+            await add_customer_start(update, context)
         else:
+            # Агар ҳеч қандай менюга мос келмаса, "Номаълум команда" деб ёзади
             await update.message.reply_text("❌ Номаълум команда.", reply_markup=main_menu_keyboard())
 
 def main():
