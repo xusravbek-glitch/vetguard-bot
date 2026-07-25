@@ -5,63 +5,60 @@ import logging
 logger = logging.getLogger(__name__)
 
 def main_menu_keyboard():
-    """Асосий меню тугмалари"""
+    """ Янгиланган ва оқилона тақсимланган асосий меню """
     keyboard = [
-        [KeyboardButton("➕ Келди"), KeyboardButton("➖ Сотиш")],
-        [KeyboardButton("📦 Омбор қолдиғи"), KeyboardButton("💰 Қарздорлик")],
-        [KeyboardButton("💸 Қарзни тўлаш"), KeyboardButton("⚙️ Дори созлаш")],
-        [KeyboardButton("👤 Мижозлар"), KeyboardButton("🆕 Янги дори қўшиш")],
-        [KeyboardButton("📜 Умумий тарих"), KeyboardButton("👤 Янги мижоз қўшиш")],
+        [KeyboardButton("🛒 Сотув қилиш"), KeyboardButton("📥 Омборга кирим")],
+        [KeyboardButton("📦 Омбор қолдиғи"), KeyboardButton("💰 Қарздорлар рўйхати")],
+        [KeyboardButton("💸 Қарзни узиш"), KeyboardButton("🏷 Дори нарх/скидка созлаш")],
+        [KeyboardButton("➕ Янги дори қўшиш"), KeyboardButton("👤 Мижозлар бўлими")],
+        [KeyboardButton("📜 Сотувлар тарихи")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def back_keyboard():
-    """Орқага қайтиш тугмаси"""
-    keyboard = [[KeyboardButton("⬅️ Орқага")]]
+    keyboard = [[KeyboardButton("⬅️ Бош менюга қайтиш")]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def payment_keyboard():
-    """Тўлов турини танлаш тугмалари"""
-    keyboard = [[KeyboardButton("💵 Нақд"), KeyboardButton("💳 Насия")]]
+    keyboard = [
+        [KeyboardButton("💵 Нақд тўлов"), KeyboardButton("💳 Насия (Қарзга)")],
+        [KeyboardButton("⬅️ Бош менюга қайтиш")]
+    ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def customer_menu_keyboard():
-    """Мижозлар меню"""
     keyboard = [
-        [KeyboardButton("👤 Мижозлар рўйхати")],
-        [KeyboardButton("🆕 Янги мижоз")],
-        [KeyboardButton("⬅️ Орқага")],
+        [KeyboardButton("📋 Барча мижозлар"), KeyboardButton("👤 Янги мижоз қўшиш")],
+        [KeyboardButton("⬅️ Бош менюга қайтиш")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def product_inline_keyboard():
-    """Дорилар инлайн клавиатураси"""
     try:
         products = await get_all_products()
         if not products:
-            return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Дорилар йўқ", callback_data="none")]])
+            return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Дорилар топилмади", callback_data="none")]])
         
         keyboard = []
-        for product in products:
-            keyboard.append([InlineKeyboardButton(f"📦 {product.name}", callback_data=f"prod_{product.name}")])
-        keyboard.append([InlineKeyboardButton("⬅️ Орқага", callback_data="back_main")])
+        for p in products:
+            keyboard.append([InlineKeyboardButton(f"💊 {p.name} ({p.quantity} шт | {int(p.price)} сўм)", callback_data=f"prod_{p.name}")])
+        keyboard.append([InlineKeyboardButton("❌ Бекор қилиш", callback_data="back_main")])
         return InlineKeyboardMarkup(keyboard)
     except Exception as e:
-        logger.error(f"❌ product_inline_keyboard xatosi: {e}")
+        logger.error(f"product_inline_keyboard error: {e}")
         return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Хатолик", callback_data="none")]])
 
 async def customer_inline_keyboard():
-    """Мижозлар инлайн клавиатураси"""
     try:
         customers = await get_all_customers()
         if not customers:
             return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Мижозлар йўқ", callback_data="none")]])
         
         keyboard = []
-        for customer in customers:
-            keyboard.append([InlineKeyboardButton(f"👤 {customer.name}", callback_data=f"cust_{customer.name}")])
-        keyboard.append([InlineKeyboardButton("⬅️ Орқага", callback_data="back_main")])
+        for c in customers:
+            keyboard.append([InlineKeyboardButton(f"👤 {c.name}", callback_data=f"cust_{c.name}")])
+        keyboard.append([InlineKeyboardButton("❌ Бекор қилиш", callback_data="back_main")])
         return InlineKeyboardMarkup(keyboard)
     except Exception as e:
-        logger.error(f"❌ customer_inline_keyboard xatosi: {e}")
+        logger.error(f"customer_inline_keyboard error: {e}")
         return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Хатолик", callback_data="none")]])
