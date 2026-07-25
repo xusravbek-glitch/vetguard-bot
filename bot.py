@@ -130,10 +130,12 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_msg = await update.message.reply_text("🤖 *AI таҳлил қилмоқда...*", parse_mode="Markdown")
         try:
             ai_data = await process_text_with_ai(text)
+            # Маълумот тўғри келганини текшириш учун логга ёзамиз
+            logger.info(f"AI Response Data: {ai_data}")
             await process_ai_action(update, context, ai_data)
         except Exception as e:
             logger.error(f"AI Text Error: {e}")
-            await update.message.reply_text("❌ Маълумотни қайта ишлашда хатолик бўлди.")
+            await update.message.reply_text(f"❌ Маълумотни қайта ишлашда хатолик бўлди: {e}")
         finally:
             try:
                 await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=status_msg.message_id)
