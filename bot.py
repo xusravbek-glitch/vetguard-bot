@@ -11,9 +11,10 @@ logger = logging.getLogger(__name__)
 
 async def post_init(application: Application):
     await init_db()
-    logger.info("🚀 VETGUARD ERP v3.0 (Railway) ишга тушди!")
+    logger.info("🚀 VETGUARD ERP v3.0 ишга тушди!")
 
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Барча текст киритишларни бошқаради (FSM)"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("🚫 Рухсат йўқ.")
         return
@@ -26,7 +27,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # Ҳар бир action га мос функцияни чақириш
+    # Action бўйича йўналтириш
     if action == "add_product":
         await add_product_finish(update, context)
     elif action == "incoming":
@@ -46,34 +47,40 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "add_customer":
         await add_customer_finish(update, context)
     else:
-        await update.message.reply_text("❌ Номаълум команда.", reply_markup=main_menu_keyboard())
+        # БУ ЕРДА "НОМАЪЛУМ КОМАНДА" ХАТОСИ ТУЗАТИЛДИ:
+        # Агар action топилмаса, лекин текст меню тугмаси бўлса, уни ишлатамиз
+        if text == "➕ Келди":
+            await incoming_start(update, context)
+        elif text == "➖ Сотиш":
+            await sell_start(update, context)
+        elif text == "📦 Омбор қолдиғи":
+            await inventory(update, context)
+        elif text == "💰 Қарздорлик":
+            await show_debts(update, context)
+        elif text == "💸 Қарзни тўлаш":
+            await pay_debt_start(update, context)
+        elif text == "⚙️ Дори созлаш":
+            await config_start(update, context)
+        elif text == "👤 Мижозлар":
+            await customers_menu(update, context)
+        elif text == "🆕 Янги дори қўшиш":
+            await add_product_start(update, context)
+        elif text == "📜 Умумий тарих":
+            await show_logs(update, context)
+        else:
+            await update.message.reply_text("❌ Номаълум команда.", reply_markup=main_menu_keyboard())
 
 def main():
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # Командалар
     application.add_handler(CommandHandler("start", start))
-    
-    # Callback (барча inline кнопкаларни битта жойда ишлайди)
     application.add_handler(CallbackQueryHandler(handle_callback))
     
-    # Меню кнопкалари
-    application.add_handler(MessageHandler(filters.Regex("^🆕 Янги дори қўшиш$"), add_product_start))
-    application.add_handler(MessageHandler(filters.Regex("^➕ Келди$"), incoming_start))
-    application.add_handler(MessageHandler(filters.Regex("^➖ Сотиш$"), sell_start))
-    application.add_handler(MessageHandler(filters.Regex("^📦 Омбор қолдиғи$"), inventory))
-    application.add_handler(MessageHandler(filters.Regex("^💰 Қарздорлик$"), show_debts))
-    application.add_handler(MessageHandler(filters.Regex("^💸 Қарзни тўлаш$"), pay_debt_start))
-    application.add_handler(MessageHandler(filters.Regex("^⚙️ Дори созлаш$"), config_start))
-    application.add_handler(MessageHandler(filters.Regex("^👤 Мижозлар$"), customers_menu))
-    application.add_handler(MessageHandler(filters.Regex("^📜 Умумий тарих$"), show_logs))
-    
-    # FSM - барча текстларни ушлайди
+    # Барча меню тугмаларини ушлайдиган фильтр
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 
-    # Ишга тушириш (авто Webhook ёки Polling)
     if WEBHOOK_URL:
-        logger.info(f"Webhook режимида ишлаяпти: {WEBHOOK_URL}")
+        logger.info(f"🌐 Webhook: {WEBHOOK_URL}")
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
@@ -81,7 +88,7 @@ def main():
             webhook_url=WEBHOOK_URL,
         )
     else:
-        logger.info("Polling режимида ишлаяпти")
+        logger.info("🔄 Polling режими")
         application.run_polling()
 
 if __name__ == "__main__":
