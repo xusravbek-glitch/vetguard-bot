@@ -33,19 +33,30 @@ def customer_menu_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-async def product_inline_keyboard():
+async def search_product_inline_keyboard(query_text: str):
+    """ Киритилган матн (ҳарфлар) бўйича дориларни қидириб тугма яратиш (Лимит муаммосини олдини олади) """
     try:
         products = await get_all_products()
         if not products:
             return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Дорилар топилмади", callback_data="none")]])
         
+        query_text = query_text.lower().strip()
+        filtered = [p for p in products if query_text in p.name.lower()]
+        
+        if not filtered:
+            return InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Бундай номли дори топилмади", callback_data="none")],
+                [InlineKeyboardButton("⬅️ Орқага", callback_data="back_main")]
+            ])
+        
         keyboard = []
-        for p in products:
+        for p in filtered[:20]:  # Максимум 20 та мос келганини чиқарамиз
             keyboard.append([InlineKeyboardButton(f"💊 {p.name} ({p.quantity} шт | {int(p.price)} сўм)", callback_data=f"prod_{p.name}")])
+        
         keyboard.append([InlineKeyboardButton("❌ Бекор қилиш", callback_data="back_main")])
         return InlineKeyboardMarkup(keyboard)
     except Exception as e:
-        logger.error(f"product_inline_keyboard error: {e}")
+        logger.error(f"search_product_inline_keyboard error: {e}")
         return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Хатолик", callback_data="none")]])
 
 async def customer_inline_keyboard():
@@ -55,7 +66,7 @@ async def customer_inline_keyboard():
             return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Мижозлар йўқ", callback_data="none")]])
         
         keyboard = []
-        for c in customers:
+        for c in customers[:40]:
             keyboard.append([InlineKeyboardButton(f"👤 {c.name}", callback_data=f"cust_{c.name}")])
         keyboard.append([InlineKeyboardButton("❌ Бекор қилиш", callback_data="back_main")])
         return InlineKeyboardMarkup(keyboard)
