@@ -8,349 +8,296 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ==========================
-# START
-# ==========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update, context):
-        return
+    if not await check_admin(update, context): return
     await clear_user_data(context)
     await update.message.reply_text(
-        "📦 **VETGUARD ERP v3.0 (PostgreSQL)**",
+        "👋 **VETGUARD ERP v3.0 Ассистентига хуш келибсиз!**\n\n"
+        "💡 *Бу ерда сиз тугмалардан фойдаланишингиз ёки шунчаки овозли/матнли хабар ва расм юбориб ҳисоб-китоб қилишингиз мумкин.*",
         reply_markup=main_menu_keyboard(),
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
-# ==========================
-# 1. ЯНГИ ДОРИ ҚЎШИШ
-# ==========================
+# --- AI БУЙРУҚЛАРИНИ ИЖРО ЭТИШ (СКИДКА БИЛАН) ---
+async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, ai_data: dict):
+    action = ai_data.get("action")
+    
+    if action == "sell":
+        product_name = ai_data.get("product_name")
+        customer_name = ai_data.get("customer_name") or "Умумий харидор"
+        quantity = ai_data.get("quantity") or 1
+        payment_type = "💳 Насия (Қарзга)" if ai_data.get("payment_type") in ["Насия", "Қарз"] else "💵 Нақд тўлов"
+
+        if not product_name:
+            await update.message.reply_text("❌ AI дори номини аниқлай олмади.")
+            return
+
+        product = await get_product(product_name)
+        if not product:
+            await update.message.reply_text(f"❌ Базада **{product_name}** топилмади.", parse_mode="Markdown")
+            return
+
+        if product.quantity < quantity:
+            await update.message.reply_text(f"❌ Омборда етарли маҳсулот йўқ. Хозирча: {product.quantity} шт.")
+            return
+
+        # Скидка / Чегирмани ҳисоблаш
+        orig_price = product.price
+        subtotal = orig_price * quantity
+        
+        disc_percent = ai_data.get("discount_percent") or 0
+        disc_amount = ai_data.get("discount_amount") or 0
+        
+        if disc_percent > 0:
+            total_discount = subtotal * (disc_percent / 100)
+        elif disc_amount > 0:
+            total_discount = disc_amount
+        else:
+            total_discount = subtotal * (product.discount / 100)  # Стандарт скидка
+
+        final_total = max(0, subtotal - total_discount)
+        new_qty = product.quantity - quantity
+
+        # Базани янгилаш
+        await update_product_quantity(product.name, new_qty)
+        await add_customer(customer_name)
+
+        if payment_type == "💳 Насия (Қарзга)":
+            debt = await get_debt(customer_name)
+            curr_debt = debt.amount if debt else 0
+            await update_debt(customer_name, curr_debt + final_total)
+
+        await log_sale(customer_name, product.name, quantity, orig_price, total_discount, final_total, payment_type)
+
+        msg = (
+            f"🤖 **AI Сотув амалга оширилди!**\n\n"
+            f"📦 Дори: **{product.name}**\n"
+            f"👤 Мижоз: **{customer_name}**\n"
+            f"🔢 Сон: {quantity} шт\n"
+            f"💰 Асл нархи: {format_currency(subtotal)}\n"
+            f"🏷 Берилган чегирма: {format_currency(total_discount)}\n"
+            f"💵 Якуний сумма: **{format_currency(final_total)}**\n"
+            f"💳 Тўлов: {payment_type}\n"
+            f"📉 Омбор қолдиғи: {new_qty} шт"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+
+    elif action == "incoming":
+        p_name = ai_data.get("product_name")
+        qty = ai_data.get("quantity") or 0
+        if not p_name or qty <= 0:
+            await update.message.reply_text("❌ Кирим маълумоти аниқланмади.")
+            return
+
+        product = await get_product(p_name)
+        if not product:
+            await add_product(p_name, quantity=qty)
+        else:
+            await update_product_quantity(product.name, product.quantity + qty)
+
+        await update.message.reply_text(f"🤖 **AI Кирим сақланди:**\n📦 {p_name}: +{qty} шт қўшилди.", reply_markup=main_menu_keyboard())
+
+    elif action == "pay_debt":
+        c_name = ai_data.get("customer_name")
+        amt = ai_data.get("amount") or 0
+        if not c_name or amt <= 0:
+            await update.message.reply_text("❌ Қарз тўлови аниқланмади.")
+            return
+
+        debt = await get_debt(c_name)
+        curr = debt.amount if debt else 0
+        new_amt = max(0, curr - amt)
+        await update_debt(c_name, new_amt)
+
+        await update.message.reply_text(
+            f"🤖 **AI Қарз тўлови:**\n👤 {c_name}\n💵 Тўланди: {format_currency(amt)}\n💰 Қолдиқ қарз: {format_currency(new_amt)}",
+            reply_markup=main_menu_keyboard()
+        )
+
+    else:
+        await update.message.reply_text("❌ Амал аниқланмади. Текшириб қайтадан ёзинг.")
+
+# --- ТУГМАЛАР ОРҚАЛИ КЕТМА-КЕТЛИК (FSM) ---
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update, context):
-        return
+    if not await check_admin(update, context): return
     context.user_data["action"] = "add_product"
     await update.message.reply_text("🆕 Янги дори номини киритинг:", reply_markup=back_keyboard())
 
 async def add_product_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        name = update.message.text.strip()
-        if not name:
-            await update.message.reply_text("❌ Ном бўш бўлмасин.", reply_markup=back_keyboard())
-            return
-        existing = await get_product(name)
-        if existing:
-            await update.message.reply_text(f"❌ {name} аллақачон бор.")
-            await start(update, context)
-            return
-        await add_product(name)
-        await update.message.reply_text(f"✅ {name} қўшилди.", reply_markup=main_menu_keyboard())
-        context.user_data.clear()
-    except Exception as e:
-        logger.error(f"add_product_finish error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
-        await start(update, context)
+    name = update.message.text.strip()
+    await add_product(name)
+    await update.message.reply_text(f"✅ **{name}** базага қўшилди.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
+    context.user_data.clear()
 
-# ==========================
-# 2. КЕЛИШ
-# ==========================
 async def incoming_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update, context):
-        return
+    if not await check_admin(update, context): return
     context.user_data["action"] = "incoming"
-    await update.message.reply_text("Дорини танланг:", reply_markup=await product_inline_keyboard())
+    await update.message.reply_text("Кирим қилинадиган дорини танланг:", reply_markup=await product_inline_keyboard())
 
 async def incoming_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message.text.isdigit():
-            await update.message.reply_text("❌ Сон киритинг.", reply_markup=back_keyboard())
-            return
-        quantity = int(update.message.text)
-        if quantity <= 0:
-            await update.message.reply_text("❌ Миқдор 0 дан катта бўлиши керак.", reply_markup=back_keyboard())
-            return
-            
-        product_name = context.user_data.get("incoming_product")
-        if not product_name:
-            await update.message.reply_text("❌ Дори танланмаган.", reply_markup=main_menu_keyboard())
-            context.user_data.clear()
-            return
-            
-        product = await get_product(product_name)
-        if not product:
-            await update.message.reply_text(f"❌ {product_name} топилмади.")
-            await start(update, context)
-            return
-            
-        await update_product_quantity(product_name, product.quantity + quantity)
-        await update.message.reply_text(
-            f"✅ {product_name} миқдори {quantity} донага ошди.", 
-            reply_markup=main_menu_keyboard()
-        )
-        context.user_data.clear()
-    except Exception as e:
-        logger.error(f"incoming_quantity error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
-        await start(update, context)
-
-# ==========================
-# 3. СОТИШ
-# ==========================
-async def sell_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update, context):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Илтимос, фақат сон киритинг.")
         return
-    context.user_data["action"] = "sell"
-    await update.message.reply_text("Дорини танланг:", reply_markup=await product_inline_keyboard())
+    qty = int(update.message.text)
+    p_name = context.user_data.get("incoming_product")
+    prod = await get_product(p_name)
+    if prod:
+        await update_product_quantity(p_name, prod.quantity + qty)
+        await update.message.reply_text(f"✅ **{p_name}** омборга +{qty} шт қўшилди.", reply_markup=main_menu_keyboard())
+    context.user_data.clear()
 
-async def sell_payment_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        payment = update.message.text
-        if payment not in ["💵 Нақд", "💳 Насия"]:
-            await update.message.reply_text("❌ Нотўғри танлов. Тугмалардан бирини босинг.")
-            return
-        context.user_data["sell_payment"] = payment
-        product_name = context.user_data.get("sell_product")
-        if not product_name:
-            await update.message.reply_text("❌ Дори танланмаган.")
-            await start(update, context)
-            return
-        product = await get_product(product_name)
-        if not product:
-            await update.message.reply_text(f"❌ {product_name} топилмади.")
-            await start(update, context)
-            return
-        final_price = product.price * (1 - product.discount / 100)
-        context.user_data["sell_final_price"] = final_price
-        await update.message.reply_text(
-            f"💵 {product_name} нархи: {format_currency(final_price)} (чегирма {product.discount}%)\nМиқдорини киритинг:", 
-            reply_markup=back_keyboard()
-        )
-    except Exception as e:
-        logger.error(f"sell_payment_type error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
-        await start(update, context)
+async def sell_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update, context): return
+    context.user_data["action"] = "sell"
+    await update.message.reply_text("🛒 Сотиладиган дорини танланг:", reply_markup=await product_inline_keyboard())
+
+async def sell_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Сон киритинг.")
+        return
+    context.user_data["sell_quantity"] = int(update.message.text)
+    await update.message.reply_text("🏷 Бу сотув учун СКИДКА (чегирма) суммага киритинг (агар йўқ бўлса 0 ёзинг):", reply_markup=back_keyboard())
+
+async def sell_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Сон киритинг.")
+        return
+    context.user_data["sell_discount"] = int(update.message.text)
+    await update.message.reply_text("💳 Тўлов турини танланг:", reply_markup=payment_keyboard())
 
 async def sell_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message.text.isdigit():
-            await update.message.reply_text("❌ Сон киритинг.")
-            return
-        quantity = int(update.message.text)
-        if quantity <= 0:
-            await update.message.reply_text("❌ Миқдор 0 дан катта бўлиши керак.")
-            return
-        
-        product_name = context.user_data.get("sell_product")
-        customer = context.user_data.get("sell_customer")
-        payment_type = context.user_data.get("sell_payment")
-        final_price = context.user_data.get("sell_final_price")
-        
-        if not all([product_name, customer, payment_type, final_price]):
-            await update.message.reply_text("❌ Савдо маълумотлари тўлиқ эмас. Қайтадан бошланг.")
-            await start(update, context)
-            return
+    payment = update.message.text
+    if payment not in ["💵 Нақд тўлов", "💳 Насия (Қарзга)"]: return
 
-        product = await get_product(product_name)
-        if not product or product.quantity < quantity:
-            available = product.quantity if product else 0
-            await update.message.reply_text(f"❌ Омборда {available} дона бор.")
-            return
-        
-        total = int(final_price * quantity)
-        new_quantity = product.quantity - quantity
-        await update_product_quantity(product_name, new_quantity)
-        
-        if payment_type == "💳 Насия":
-            debt = await get_debt(customer)
-            current_debt = debt.amount if debt else 0
-            await update_debt(customer, current_debt + total)
-            
-        await log_sale(customer, product_name, quantity, total, payment_type)
-        await update.message.reply_text(
-            f"✅ Сотилди: {product_name} x{quantity}\n💰 {format_currency(total)}\n📦 Қолди: {new_quantity}", 
-            reply_markup=main_menu_keyboard()
-        )
-        if new_quantity <= LOW_STOCK_LIMIT:
-            await update.message.reply_text(f"⚠️ **{product_name}** тугаяпти! {new_quantity} дона қолди.", parse_mode="Markdown")
-        context.user_data.clear()
-    except Exception as e:
-        logger.error(f"sell_finish error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
-        await start(update, context)
+    p_name = context.user_data.get("sell_product")
+    c_name = context.user_data.get("sell_customer")
+    qty = context.user_data.get("sell_quantity")
+    discount = context.user_data.get("sell_discount", 0)
 
-# ==========================
-# 4. ҚАРЗНИ ТЎЛАШ
-# ==========================
-async def pay_debt_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update, context):
-        return
-    context.user_data["action"] = "pay_debt"
-    await update.message.reply_text("Мижозни танланг:", reply_markup=await customer_inline_keyboard())
+    product = await get_product(p_name)
+    subtotal = product.price * qty
+    final_total = max(0, subtotal - discount)
+    new_qty = product.quantity - qty
 
-async def pay_debt_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message.text.isdigit():
-            await update.message.reply_text("❌ Сумма киритинг.")
-            return
-        amount = int(update.message.text)
-        if amount <= 0:
-            await update.message.reply_text("❌ Сумма нотўғри.")
-            return
-        customer = context.user_data.get("pay_debt_customer")
-        if not customer:
-            await update.message.reply_text("❌ Мижоз танланмаган.")
-            await start(update, context)
-            return
-        debt = await get_debt(customer)
-        current_debt = debt.amount if debt else 0
-        if amount > current_debt:
-            await update.message.reply_text(f"❌ Қарздан ортиқ тўлайсиз. Қарз: {format_currency(current_debt)}")
-            return
-        new_amount = current_debt - amount
-        await update_debt(customer, new_amount)
-        await update.message.reply_text(f"✅ Тўланди. Қолган қарз: {format_currency(new_amount)}", reply_markup=main_menu_keyboard())
-        context.user_data.clear()
-    except Exception as e:
-        logger.error(f"pay_debt_finish error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
-        await start(update, context)
+    await update_product_quantity(p_name, new_qty)
+    
+    if payment == "💳 Насия (Қарзга)":
+        debt = await get_debt(c_name)
+        curr = debt.amount if debt else 0
+        await update_debt(c_name, curr + final_total)
 
-# ==========================
-# 5. ДОРИ СОЗЛАШ
-# ==========================
+    await log_sale(c_name, p_name, qty, product.price, discount, final_total, payment)
+
+    msg = (
+        f"✅ **Сотув якунланди!**\n\n"
+        f"📦 Дори: {p_name}\n"
+        f"👤 Мижоз: {c_name}\n"
+        f"🔢 Сон: {qty} шт\n"
+        f"🏷 Чегирма: {format_currency(discount)}\n"
+        f"💵 Топшириладиган сумма: **{format_currency(final_total)}**\n"
+        f"💳 Тўлов: {payment}"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+    context.user_data.clear()
+
 async def config_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update, context):
-        return
+    if not await check_admin(update, context): return
     context.user_data["action"] = "config"
-    await update.message.reply_text("Дорини танланг:", reply_markup=await product_inline_keyboard())
+    await update.message.reply_text("Созланадиган дорини танланг:", reply_markup=await product_inline_keyboard())
 
 async def config_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message.text.isdigit():
-            await update.message.reply_text("❌ Нархни сон киритинг.", reply_markup=back_keyboard())
-            return
-        context.user_data["config_price"] = int(update.message.text)
-        await update.message.reply_text("Чегирма фоизини киритинг (0-99):", reply_markup=back_keyboard())
-    except Exception as e:
-        logger.error(f"config_price error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
+    if not update.message.text.isdigit(): return
+    context.user_data["config_price"] = float(update.message.text)
+    await update.message.reply_text("Стандарт скидка фоизини киритинг (0-99):", reply_markup=back_keyboard())
 
 async def config_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message.text.isdigit():
-            await update.message.reply_text("❌ Фоизни сон киритинг.", reply_markup=back_keyboard())
-            return
-        discount = int(update.message.text)
-        if discount < 0 or discount > 99:
-            await update.message.reply_text("❌ Фоиз 0-99 оралиғида бўлиши керак.")
-            return
-        product_name = context.user_data.get("config_product")
-        price = context.user_data.get("config_price")
-        if not product_name or price is None:
-            await update.message.reply_text("❌ Маълумотлар тўлиқ эмас.")
-            await start(update, context)
-            return
-        await update_product_details(product_name, price, discount)
-        await update.message.reply_text(f"✅ {product_name} янгиланди:\n💰 {format_currency(price)}\n🎁 {discount}% чегирма", reply_markup=main_menu_keyboard())
-        context.user_data.clear()
-    except Exception as e:
-        logger.error(f"config_discount error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
-        await start(update, context)
+    if not update.message.text.isdigit(): return
+    disc = float(update.message.text)
+    p_name = context.user_data.get("config_product")
+    price = context.user_data.get("config_price")
+    
+    await update_product_details(p_name, price, disc)
+    await update.message.reply_text(f"✅ **{p_name}** нархи: {format_currency(price)} ({disc}% скидка) қилиб янгиланди.", reply_markup=main_menu_keyboard())
+    context.user_data.clear()
 
-# ==========================
-# 6. МИЖОЗЛАР
-# ==========================
-async def customers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update, context):
-        return
-    await update.message.reply_text("Мижозларни бошқариш:", reply_markup=customer_menu_keyboard())
+async def pay_debt_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update, context): return
+    context.user_data["action"] = "pay_debt"
+    await update.message.reply_text("Қарзни тўлайдиган мижозни танланг:", reply_markup=await customer_inline_keyboard())
 
-async def add_customer_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update, context):
-        return
-    context.user_data["action"] = "add_customer"
-    await update.message.reply_text("Янги мижоз исми:", reply_markup=back_keyboard())
+async def pay_debt_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit(): return
+    amt = float(update.message.text)
+    c_name = context.user_data.get("pay_debt_customer")
+    debt = await get_debt(c_name)
+    curr = debt.amount if debt else 0
+    new_amt = max(0, curr - amt)
+    await update_debt(c_name, new_amt)
+    await update.message.reply_text(f"✅ Тўлов қабул қилинди.\n👤 {c_name} қолган қарзи: {format_currency(new_amt)}", reply_markup=main_menu_keyboard())
+    context.user_data.clear()
 
-async def add_customer_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        name = update.message.text.strip()
-        if not name:
-            await update.message.reply_text("❌ Исм бўш бўлмасин.", reply_markup=back_keyboard())
-            return
-        customers = await get_all_customers()
-        if any(c.name == name for c in customers):
-            await update.message.reply_text(f"❌ {name} аллақачон бор.")
-            await start(update, context)
-            return
-        await add_customer(name)
-        await update.message.reply_text(f"✅ {name} мижозлар рўйхатига қўшилди.", reply_markup=main_menu_keyboard())
-        context.user_data.clear()
-    except Exception as e:
-        logger.error(f"add_customer_finish error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
-        await start(update, context)
-
-# ==========================
-# 7. СТАТИК МЕНЮЛАР
-# ==========================
 async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not await check_admin(update, context):
-            return
-        products = await get_all_products()
-        if not products:
-            await update.message.reply_text("📦 Омбор бўш.")
-            return
-        lines = ["📦 **Омбор ҳолати:**\n"]
-        for p in products:
-            status = "🔴" if p.quantity <= LOW_STOCK_LIMIT else "🟢"
-            lines.append(f"{status} **{p.name}**")
-            lines.append(f"   📦 {p.quantity} дона")
-            lines.append(f"   💰 {format_currency(p.price)}")
-            lines.append(f"   🎁 {p.discount}% чегирма\n")
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"inventory error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
+    if not await check_admin(update, context): return
+    products = await get_all_products()
+    if not products:
+        await update.message.reply_text("📦 Омбор бўш.")
+        return
+    text = "📦 **Омбордаги мавжуд дорилар:**\n\n"
+    for p in products:
+        st = "🔴" if p.quantity <= LOW_STOCK_LIMIT else "🟢"
+        text += f"{st} **{p.name}** — {p.quantity} шт | {format_currency(p.price)} (Скидка: {p.discount}%)\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def show_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not await check_admin(update, context):
-            return
-        debts = await get_all_debts()
-        if not debts:
-            await update.message.reply_text("Қарз йўқ.")
-            return
-        lines = ["💰 **Қарздорлик:**\n"]
-        for d in debts:
-            if d.amount > 0:
-                lines.append(f"👤 {d.customer_name}: {format_currency(d.amount)}")
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"show_debts error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
+    if not await check_admin(update, context): return
+    debts = await get_all_debts()
+    if not debts:
+        await update.message.reply_text("🎉 Қарздорликлар йўқ!")
+        return
+    text = "💰 **Насия ва Қарздорлар рўйхати:**\n\n"
+    for d in debts:
+        text += f"👤 **{d.customer_name}**: {format_currency(d.amount)}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not await check_admin(update, context):
-            return
-        logs = await get_sale_logs()
-        if not logs:
-            await update.message.reply_text("Тарих бўш.")
-            return
-        lines = ["📜 **Сўнгги 100 та операция:**\n"]
-        for log in logs:
-            lines.append(f"[{log.timestamp}] {log.payment_type}: {log.customer} → {log.product} x{log.quantity} = {format_currency(log.total)}")
-        text = "\n".join(lines)
-        if len(text) > 4000:
-            text = text[:4000] + "\n... (давоми бор)"
-        await update.message.reply_text(text, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"show_logs error: {e}")
-        await update.message.reply_text(f"❌ Хатолик: {e}")
+    if not await check_admin(update, context): return
+    logs = await get_sale_logs()
+    if not logs:
+        await update.message.reply_text("📜 Сотувлар тарихи бўш.")
+        return
+    text = "📜 **Сўнгги сотувлар тарихи:**\n\n"
+    for l in logs:
+        text += f"⏱ [{l.timestamp}]\n👤 {l.customer} | 📦 {l.product} x{l.quantity} шт\n🏷 Чегирма: {format_currency(l.discount_applied)} | 💵 Сумма: {format_currency(l.total)} ({l.payment_type})\n---\n"
+    if len(text) > 4000: text = text[:4000]
+    await update.message.reply_text(text)
 
-# ==========================
-# CALLBACK HANDLER
-# ==========================
+async def customers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update, context): return
+    await update.message.reply_text("👤 Мижозларни бошқариш бўлими:", reply_markup=customer_menu_keyboard())
+
+async def add_customer_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update, context): return
+    context.user_data["action"] = "add_customer"
+    await update.message.reply_text("👤 Янги мижоз исмини киритинг:", reply_markup=back_keyboard())
+
+async def add_customer_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    await add_customer(name)
+    await update.message.reply_text(f"✅ Мижоз қўшилди: **{name}**", parse_mode="Markdown", reply_markup=main_menu_keyboard())
+    context.user_data.clear()
+
+async def list_customers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update, context): return
+    customers = await get_all_customers()
+    if not customers:
+        await update.message.reply_text("👥 Мижозлар базаси бўш.")
+        return
+    text = "📋 **Рўйхатдаги мижозлар:**\n\n"
+    for c in customers:
+        text += f"• {c.name}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# Inline тугмаларни ушлаш
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -359,36 +306,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    action = context.user_data.get("action")
-    
-    if action == "incoming":
-        if query.data.startswith("prod_"):
-            product = query.data.replace("prod_", "")
-            context.user_data["incoming_product"] = product
-            await query.message.reply_text(f"📥 {product} миқдорини киритинг:", reply_markup=back_keyboard())
-            
-    elif action == "sell":
+    act = context.user_data.get("action")
+    if act == "incoming" and query.data.startswith("prod_"):
+        p = query.data.replace("prod_", "")
+        context.user_data["incoming_product"] = p
+        await query.message.reply_text(f"📥 **{p}** неча дона келди?", reply_markup=back_keyboard())
+
+    elif act == "sell":
         if query.data.startswith("prod_"):
             context.user_data["sell_product"] = query.data.replace("prod_", "")
             await query.message.reply_text("👤 Мижозни танланг:", reply_markup=await customer_inline_keyboard())
         elif query.data.startswith("cust_"):
             context.user_data["sell_customer"] = query.data.replace("cust_", "")
-            await query.message.reply_text("Тўлов турини танланг:", reply_markup=payment_keyboard())
-            
-    elif action == "pay_debt":
-        if query.data.startswith("cust_"):
-            customer = query.data.replace("cust_", "")
-            debt = await get_debt(customer)
-            current_debt = debt.amount if debt else 0
-            if current_debt <= 0:
-                await query.message.reply_text(f"❌ {customer} қарзи йўқ.")
-                await start(update, context)
-                return
-            context.user_data["pay_debt_customer"] = customer
-            await query.message.reply_text(f"👤 {customer} қарзи: {format_currency(current_debt)}\nТўлайдиган суммани киритинг:", reply_markup=back_keyboard())
+            await query.message.reply_text("🔢 Нечта сотилмоқда (сонини киритинг)?", reply_markup=back_keyboard())
 
-    elif action == "config":
-        if query.data.startswith("prod_"):
-            product = query.data.replace("prod_", "")
-            context.user_data["config_product"] = product
-            await query.message.reply_text(f"🛠 {product} учун янги нархни киритинг (сўм):", reply_markup=back_keyboard())
+    elif act == "pay_debt" and query.data.startswith("cust_"):
+        c = query.data.replace("cust_", "")
+        context.user_data["pay_debt_customer"] = c
+        await query.message.reply_text(f"💵 **{c}** қанча сумма тўламоқда?", reply_markup=back_keyboard())
+
+    elif act == "config" and query.data.startswith("prod_"):
+        p = query.data.replace("prod_", "")
+        context.user_data["config_product"] = p
+        await query.message.reply_text(f"🛠 **{p}** янги асосий нархини киритинг:", reply_markup=back_keyboard())
