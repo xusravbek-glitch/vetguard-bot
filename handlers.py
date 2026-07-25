@@ -356,7 +356,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # Сотувлар тарихи даврларини фильтрлаш
+    # Сотувлар тарихи даврларини фильтрлаш тугмалари
     if query.data.startswith("logs_"):
         period = query.data.replace("logs_", "")
         
