@@ -1,5 +1,5 @@
-python-telegram-bot[webhooks]==21.11.1
-SQLAlchemy==1.4.49
-asyncpg==0.30.0
+python-telegram-bot==21.3
+sqlalchemy==2.0.23
+asyncpg==0.29.0
 python-dotenv==1.0.0
-requests
+requests==2.31.0
