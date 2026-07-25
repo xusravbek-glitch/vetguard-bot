@@ -34,12 +34,11 @@ from handlers import (
     show_logs,
     handle_callback,
     process_ai_action,
-    handle_search_text # <-- Қидирув функциясини улаймиз
+    handle_search_text
 )
 from utils import is_admin
 from ai_service import process_text_with_ai, process_image_with_ai
 
-# Логларни созлаш
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -55,13 +54,11 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     action = context.user_data.get("action")
 
-    # Бош меню ёки /start буйруғи
     if text in ["⬅️ Бош менюга қайтиш", "/start"]:
         context.user_data.clear()
         await start(update, context)
         return
 
-    # 1. АСОСИЙ МЕНЮ ТУГМАЛАРИ (FSM-дан олдин текширилади)
     if text == "🛒 Сотув қилиш":
         context.user_data.clear()
         await sell_start(update, context)
@@ -102,12 +99,12 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_logs(update, context)
         return
 
-    # 2. ДОРИ ҚИДИРУВ ҲОЛАТЛАРИ (Янги қўшилган қисм)
-    if action in ["search_incoming_product", "search_sell_product"]:
+    # Дори қидириш ҳолатлари
+    if action in ["search_incoming_product", "search_sell_product", "config"]:
         await handle_search_text(update, context)
         return
 
-    # 3. БОШҚА FSM ҲОЛАТЛАРИ (Матнли қадамма-қадам киритишлар)
+    # Бошқа FSM ҳолатлари
     elif action == "add_product":
         await add_product_finish(update, context)
     elif action == "incoming":
@@ -129,7 +126,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "add_customer":
         await add_customer_finish(update, context)
 
-    # 4. ЭРКИН МАТНЛАР -> AI ОРҚАЛИ ТАҲЛИЛ
+    # Эркин матнлар -> AI таҳлил
     else:
         status_msg = await update.message.reply_text("🤖 *AI таҳлил қилмоқда...*", parse_mode="Markdown")
         try:
@@ -169,7 +166,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # Ҳандлерларни рўйхатдан ўтказиш
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
