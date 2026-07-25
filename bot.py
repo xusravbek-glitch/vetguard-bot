@@ -143,7 +143,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         
-        # DeepSeek га юбо��иш
+        # DeepSeek га юбориш
         result = await analyze_image_with_deepseek(file)
         
         # Жавобни таҳлил қилиш
