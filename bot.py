@@ -33,7 +33,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = context.user_data.get("action")
     
     # 1. Орқага қайтиш
-    if text == "⬅️ Орқага":
+    if text in ["⬅️ Орқага", "/start"]:
         await start(update, context)
         return
 
@@ -50,7 +50,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "pay_debt":
         await pay_debt_finish(update, context)
     elif action == "config":
-        # config_price -> config_discount ketma-ketligi
         if context.user_data.get("config_price") is None:
             await config_price(update, context)
         else:
@@ -58,7 +57,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "add_customer":
         await add_customer_finish(update, context)
     
-    # 3. Агар action топилмаса, демак бу асосий меню тугмаси
+    # 3. Меню тугмалари
     else:
         if text == "➕ Келди":
             await incoming_start(update, context)
@@ -84,32 +83,22 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Номаълум команда.", reply_markup=main_menu_keyboard())
 
 async def analyze_image_with_deepseek(image_file):
-    """DeepSeek Vision API га расмни анализ қилиш"""
+    """DeepSeek Chat/Vision API га расмни анализ қилиш"""
     try:
-        # 1. Расмни база64 га айлантирамиз
         image_bytes = await image_file.download_as_bytearray()
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
-        # 2. DeepSeek Vision API (Chat) га юбориш
         headers = {
             "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
             "Content-Type": "application/json"
         }
+        # DeepSeek rasmiy model nomi: deepseek-chat
         payload = {
-            "model": "deepseek-vision",
+            "model": "deepseek-chat",
             "messages": [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text", 
-                            "text": "Бу расмда нима ёзилган? Дори номи ва сонини топиб, JSON форматда қайтар: {'name': '...', 'quantity': ...}"
-                        },
-                        {
-                            "type": "image_url", 
-                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                        }
-                    ]
+                    "content": f"Суратдаги дори номи ва сонини аниқлаб беринг: data:image/jpeg;base64,{base64_image}"
                 }
             ]
         }
@@ -124,7 +113,7 @@ async def analyze_image_with_deepseek(image_file):
             return response.json()
         else:
             logger.error(f"DeepSeek API Error: {response.status_code} - {response.text}")
-            return {"error": f"DeepSeek API Error: {response.status_code}"}
+            return {"error": f"API Хатолик: {response.status_code}"}
             
     except Exception as e:
         logger.error(f"Image analysis error: {e}")
@@ -137,34 +126,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        await update.message.reply_text("📸 DeepSeek расмни таҳлил қилмоқда...")
-        
-        # Энг катта расмни олиш
+        await update.message.reply_text("📸 Расм таҳлил қилинмоқда...")
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         
-        # DeepSeek га юбориш
         result = await analyze_image_with_deepseek(file)
         
-        # Жавобни таҳлил қилиш
         if "error" in result:
             await update.message.reply_text(f"❌ Хатолик: {result['error']}")
             return
             
         content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-        if not content:
-            await update.message.reply_text("❌ DeepSeek жавоб бермади.")
-            return
-            
-        await update.message.reply_text(f"✅ DeepSeek натижаси:\n\n{content}")
-        
-        # Қўшимча: Агар JSON қайтса, базага ёзиш ёки сотиш мумкин
-        try:
-            import json
-            data = json.loads(content)
-            logger.info(f"Parsed DeepSeek result: {data}")
-        except:
-            pass
+        await update.message.reply_text(f"✅ Натижа:\n\n{content}")
             
     except Exception as e:
         logger.error(f"Photo handler error: {e}")
@@ -178,17 +151,9 @@ def main():
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 
-    if WEBHOOK_URL:
-        logger.info(f"🌐 Webhook: {WEBHOOK_URL}")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path="/webhook",
-            webhook_url=WEBHOOK_URL,
-        )
-    else:
-        logger.info("🔄 Polling режими")
-        application.run_polling()
+    # Railway barqaror ishlashi uchun Polling rejimi tavsiya etiladi
+    logger.info("🔄 Polling режимида ишга тушмоқда...")
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
