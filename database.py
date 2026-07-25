@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, text
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 
@@ -22,6 +22,14 @@ async def init_db():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # --- Устун етишмаслиги хатосини олдини олиш учун қўшилди ---
+            try:
+                await conn.execute(
+                    text("ALTER TABLE sale_logs ADD COLUMN IF NOT EXISTS original_price FLOAT DEFAULT 0.0;")
+                )
+            except Exception as e:
+                pass
+            # ------------------------------------------------------------
         logger.info("✅ База муваффақиятли ишга тушди ва жадваллар яратилди")
     except SQLAlchemyError as e:
         logger.error(f"❌ Database initialization error: {e}")
@@ -184,11 +192,3 @@ async def get_sale_logs(limit: int = 50):
     except SQLAlchemyError as e:
         logger.error(f"❌ get_sale_logs error: {e}")
         return []
-# database.py файлингиз охирига қўшинг:
-from sqlalchemy import text
-
-async def fix_missing_columns():
-    async with engine.begin() as conn:
-        await conn.execute(
-            text("ALTER TABLE sale_logs ADD COLUMN IF NOT EXISTS original_price FLOAT DEFAULT 0.0;")
-        )
