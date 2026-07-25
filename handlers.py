@@ -4,6 +4,9 @@ from database import *
 from keyboards import *
 from utils import *
 from config import LOW_STOCK_LIMIT
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ==========================
 # START
@@ -42,6 +45,7 @@ async def add_product_finish(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"✅ {name} қўшилди.", reply_markup=main_menu_keyboard())
         context.user_data.clear()
     except Exception as e:
+        logger.error(f"add_product_finish error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
         await start(update, context)
 
@@ -83,6 +87,7 @@ async def incoming_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         context.user_data.clear()
     except Exception as e:
+        logger.error(f"incoming_quantity error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
         await start(update, context)
 
@@ -119,6 +124,7 @@ async def sell_payment_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_keyboard()
         )
     except Exception as e:
+        logger.error(f"sell_payment_type error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
         await start(update, context)
 
@@ -166,6 +172,7 @@ async def sell_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚠️ **{product_name}** тугаяпти! {new_quantity} дона қолди.", parse_mode="Markdown")
         context.user_data.clear()
     except Exception as e:
+        logger.error(f"sell_finish error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
         await start(update, context)
 
@@ -202,6 +209,7 @@ async def pay_debt_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Тўланди. Қолган қарз: {format_currency(new_amount)}", reply_markup=main_menu_keyboard())
         context.user_data.clear()
     except Exception as e:
+        logger.error(f"pay_debt_finish error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
         await start(update, context)
 
@@ -214,13 +222,6 @@ async def config_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["action"] = "config"
     await update.message.reply_text("Дорини танланг:", reply_markup=await product_inline_keyboard())
 
-async def config_product_selected_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    product = query.data.replace("prod_", "")
-    context.user_data["config_product"] = product
-    await query.message.reply_text(f"🛠 {product} учун янги нархни киритинг (сўм):", reply_markup=back_keyboard())
-
 async def config_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message.text.isdigit():
@@ -229,6 +230,7 @@ async def config_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["config_price"] = int(update.message.text)
         await update.message.reply_text("Чегирма фоизини киритинг (0-99):", reply_markup=back_keyboard())
     except Exception as e:
+        logger.error(f"config_price error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
 
 async def config_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -250,6 +252,7 @@ async def config_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {product_name} янгиланди:\n💰 {format_currency(price)}\n🎁 {discount}% чегирма", reply_markup=main_menu_keyboard())
         context.user_data.clear()
     except Exception as e:
+        logger.error(f"config_discount error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
         await start(update, context)
 
@@ -282,6 +285,7 @@ async def add_customer_finish(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"✅ {name} мижозлар рўйхатига қўшилди.", reply_markup=main_menu_keyboard())
         context.user_data.clear()
     except Exception as e:
+        logger.error(f"add_customer_finish error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
         await start(update, context)
 
@@ -305,6 +309,7 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"   🎁 {p.discount}% чегирма\n")
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
     except Exception as e:
+        logger.error(f"inventory error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
 
 async def show_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -321,6 +326,7 @@ async def show_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"👤 {d.customer_name}: {format_currency(d.amount)}")
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
     except Exception as e:
+        logger.error(f"show_debts error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
 
 async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -339,6 +345,7 @@ async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = text[:4000] + "\n... (давоми бор)"
         await update.message.reply_text(text, parse_mode="Markdown")
     except Exception as e:
+        logger.error(f"show_logs error: {e}")
         await update.message.reply_text(f"❌ Хатолик: {e}")
 
 # ==========================
