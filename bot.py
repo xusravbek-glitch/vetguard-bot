@@ -1,7 +1,17 @@
 import logging
+import requests
+import base64
+import os
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from config import BOT_TOKEN, WEBHOOK_URL, PORT
+from telegram.ext import (
+    Application, 
+    CommandHandler, 
+    MessageHandler, 
+    CallbackQueryHandler, 
+    ContextTypes,
+    filters
+)
+from config import BOT_TOKEN, WEBHOOK_URL, PORT, DEEPSEEK_API_KEY
 from database import init_db
 from handlers import *
 from utils import is_admin
@@ -73,12 +83,99 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Номаълум команда.", reply_markup=main_menu_keyboard())
 
+async def analyze_image_with_deepseek(image_file):
+    """DeepSeek Vision API га расмни анализ қилиш"""
+    try:
+        # 1. Расмни база64 га айлантирамиз
+        image_bytes = await image_file.download_as_bytearray()
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # 2. DeepSeek Vision API (Chat) га юбориш
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "deepseek-vision",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text", 
+                            "text": "Бу расмда нима ёзилган? Дори номи ва сонини топиб, JSON форматда қайтар: {'name': '...', 'quantity': ...}"
+                        },
+                        {
+                            "type": "image_url", 
+                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                        }
+                    ]
+                }
+            ]
+        }
+        response = requests.post(
+            "https://api.deepseek.com/v1/chat/completions", 
+            headers=headers, 
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.error(f"DeepSeek API Error: {response.status_code} - {response.text}")
+            return {"error": f"DeepSeek API Error: {response.status_code}"}
+            
+    except Exception as e:
+        logger.error(f"Image analysis error: {e}")
+        return {"error": str(e)}
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Telegram расм ҳабарларини ушловчи функция"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 Рухсат йўқ.")
+        return
+    
+    try:
+        await update.message.reply_text("📸 DeepSeek расмни таҳлил қилмоқда...")
+        
+        # Энг катта расмни олиш
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        
+        # DeepSeek га юбо��иш
+        result = await analyze_image_with_deepseek(file)
+        
+        # Жавобни таҳлил қилиш
+        if "error" in result:
+            await update.message.reply_text(f"❌ Хатолик: {result['error']}")
+            return
+            
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not content:
+            await update.message.reply_text("❌ DeepSeek жавоб бермади.")
+            return
+            
+        await update.message.reply_text(f"✅ DeepSeek натижаси:\n\n{content}")
+        
+        # Қўшимча: Агар JSON қайтса, базага ёзиш ёки сотиш мумкин
+        try:
+            import json
+            data = json.loads(content)
+            logger.info(f"Parsed DeepSeek result: {data}")
+        except:
+            pass
+            
+    except Exception as e:
+        logger.error(f"Photo handler error: {e}")
+        await update.message.reply_text(f"❌ Хатолик юз берди: {e}")
+
 def main():
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_callback))
-    
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 
     if WEBHOOK_URL:
@@ -95,61 +192,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    import requests
-import base64
-import os
-from telegram.ext import MessageHandler, filters
-from config import DEEPSEEK_API_KEY  # .env дан оламиз
-
-# DeepSeek Vision API га сўров юбориш
-async def analyze_image_with_deepseek(image_file):
-    # 1. Расмни база64 га айлантирамиз
-    image_bytes = await image_file.download_as_bytearray()
-    base64_image = base64.b64encode(image_bytes).decode('utf-8')
-    
-    # 2. DeepSeek Vision API (Chat) га юбориш
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "deepseek-vision",  # DeepSeek Vision модели
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Бу расмда нима ёзилган? Дори номи ва сонини топиб, JSON форматда қайтар: {'name': '...', 'quantity': ...}"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }
-        ]
-    }
-    response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload)
-    return response.json()
-
-# Telegram расм ҳабарларини ушловчи функция
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    
-    await update.message.reply_text("📸 DeepSeek расмни таҳлил қилмоқда...")
-    
-    # Энг катта расмни олиш
-    photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    
-    # DeepSeek га юбориш
-    result = await analyze_image_with_deepseek(file)
-    
-    # Жавобни таҳлил қилиш
-    try:
-        content = result["choices"][0]["message"]["content"]
-        await update.message.reply_text(f"✅ DeepSeek натижаси:\n\n{content}")
-        
-        # Қўшимча: Агар JSON қайтса, базага ёзиш ёки сотиш мумкин!
-        # ... (бу ерда SQL га ёзиш коди бўлиши мумкин)
-        
-    except Exception as e:
-        await update.message.reply_text(f"❌ Xatolik: {e}")
-
-# bot.py даги main() ичига қўшинг:
-application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
