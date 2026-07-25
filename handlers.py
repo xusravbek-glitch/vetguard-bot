@@ -201,7 +201,7 @@ async def config_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
 # ==========================
-# 6. МИЖОЗЛАР
+# 6. МИЖОЗЛАР (БУ ЕРДА АСОСИЙ ТУЗАТИШ КИРИТИЛДИ)
 # ==========================
 async def customers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
@@ -215,7 +215,7 @@ async def add_customer_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def add_customer_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
     if not name:
-        await update.message.reply_text("❌ Исм бўш бўлмасин.")
+        await update.message.reply_text("❌ Исм бўш бўлмасин.", reply_markup=back_keyboard())
         return
     customers = await get_all_customers()
     if any(c.name == name for c in customers):
@@ -283,31 +283,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     action = context.user_data.get("action")
     
+    # КЕЛИШ (Incoming)
     if action == "incoming":
-        product = query.data.replace("prod_", "")
-        context.user_data["incoming_product"] = product
-        await query.message.reply_text(f"📥 {product} миқдорини киритинг:", reply_markup=back_keyboard())
-        
+        if query.data.startswith("prod_"):
+            product = query.data.replace("prod_", "")
+            context.user_data["incoming_product"] = product
+            await query.message.reply_text(f"📥 {product} миқдорини киритинг:", reply_markup=back_keyboard())
+            
+    # СОТИШ (Sell)
     elif action == "sell":
         if query.data.startswith("prod_"):
             context.user_data["sell_product"] = query.data.replace("prod_", "")
             await query.message.reply_text("👤 Мижозни танланг:", reply_markup=await customer_inline_keyboard())
+            
         elif query.data.startswith("cust_"):
             context.user_data["sell_customer"] = query.data.replace("cust_", "")
             await query.message.reply_text("Тўлов турини танланг:", reply_markup=payment_keyboard())
             
+    # ҚАРЗ ТЎЛАШ (Pay Debt)
     elif action == "pay_debt":
-        customer = query.data.replace("cust_", "")
-        debt = await get_debt(customer)
-        current_debt = debt.amount if debt else 0
-        if current_debt <= 0:
-            await query.message.reply_text(f"❌ {customer} қарзи йўқ.")
-            await start(update, context)
-            return
-        context.user_data["pay_debt_customer"] = customer
-        await query.message.reply_text(f"👤 {customer} қарзи: {format_currency(current_debt)}\nТўлайдиган суммани киритинг:", reply_markup=back_keyboard())
+        if query.data.startswith("cust_"):
+            customer = query.data.replace("cust_", "")
+            debt = await get_debt(customer)
+            current_debt = debt.amount if debt else 0
+            if current_debt <= 0:
+                await query.message.reply_text(f"❌ {customer} қарзи йўқ.")
+                await start(update, context)
+                return
+            context.user_data["pay_debt_customer"] = customer
+            await query.message.reply_text(f"👤 {customer} қарзи: {format_currency(current_debt)}\nТўлайдиган суммани киритинг:", reply_markup=back_keyboard())
 
+    # ДОРИ СОЗЛАШ (Config)
     elif action == "config":
-        product = query.data.replace("prod_", "")
-        context.user_data["config_product"] = product
-        await query.message.reply_text(f"🛠 {product} учун янги нархни киритинг (сўм):", reply_markup=back_keyboard())
+        if query.data.startswith("prod_"):
+            product = query.data.replace("prod_", "")
+            context.user_data["config_product"] = product
+            await query.message.reply_text(f"🛠 {product} учун янги нархни киритинг (сўм):", reply_markup=back_keyboard())
