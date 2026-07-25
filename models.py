@@ -1,36 +1,32 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime
-from sqlalchemy.orm import declarative_base
 from datetime import datetime
 
-Base = declarative_base()
+class Product:
+    def __init__(self, id=None, name=None, quantity=0, price=0.0, discount=0.0):
+        self.id = id
+        self.name = name
+        self.quantity = quantity
+        self.price = price
+        self.discount = discount  # Стандарт чегирма фоизи
 
-class Product(Base):
-    __tablename__ = "products"
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True, nullable=False)
-    quantity = Column(Integer, default=0)
-    price = Column(Float, default=0.0)
-    discount = Column(Float, default=0.0)  # Стандарт чегирма фоизи
+class Customer:
+    def __init__(self, id=None, name=None):
+        self.id = id
+        self.name = name
 
-class Customer(Base):
-    __tablename__ = "customers"
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True, nullable=False)
+class Debt:
+    def __init__(self, id=None, customer_name=None, amount=0.0):
+        self.id = id
+        self.customer_name = customer_name
+        self.amount = amount
 
-class Debt(Base):
-    __tablename__ = "debts"
-    id = Column(Integer, primary_key=True)
-    customer_name = Column(String, nullable=False, unique=True)
-    amount = Column(Float, default=0.0)
-
-class SaleLog(Base):
-    __tablename__ = "sale_logs"
-    id = Column(Integer, primary_key=True)
-    timestamp = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    customer = Column(String, nullable=False)
-    product = Column(String, nullable=False)
-    quantity = Column(Integer, nullable=False)
-    original_price = Column(Float, nullable=False)
-    discount_applied = Column(Float, default=0.0)  # Берилган чегирма (суммада)
-    total = Column(Float, nullable=False)
-    payment_type = Column(String, nullable=False)
+class SaleLog:
+    def __init__(self, id=None, timestamp=None, customer=None, product=None, quantity=0, original_price=0.0, discount_applied=0.0, total=0.0, payment_type=None):
+        self.id = id
+        self.timestamp = timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.customer = customer
+        self.product = product
+        self.quantity = quantity
+        self.original_price = original_price
+        self.discount_applied = discount_applied  # Берилган чегирма (суммада)
+        self.total = total
+        self.payment_type = payment_type
