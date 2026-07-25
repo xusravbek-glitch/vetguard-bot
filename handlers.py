@@ -126,7 +126,7 @@ async def add_product_finish(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"✅ **{name}** базага қўшилди.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
     context.user_data.clear()
 
-# 1-УСУЛ БЎЙИЧА ҚИДИРУВ БОШЛАНИШИ (Омборга кирим)
+# Омборга кирим қилиш
 async def incoming_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "search_incoming_product"
@@ -149,7 +149,7 @@ async def incoming_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ **{p_name}** омборга +{qty} шт қўшилди.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
     context.user_data.clear()
 
-# 1-УСУЛ БЎЙИЧА ҚИДИРУВ БОШЛАНИШИ (Сотув қилиш)
+# Сотув қилиш
 async def sell_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "search_sell_product"
@@ -209,24 +209,30 @@ async def sell_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     context.user_data.clear()
 
+# Дори нархи ва скидкасини созлаш
 async def config_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "config"
     await update.message.reply_text("Созланадиган дори номининг камида 2-3 та ҳарфини ёзинг:", reply_markup=back_keyboard())
 
 async def config_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.text.isdigit(): return
+    if not update.message.text.isdigit(): 
+        await update.message.reply_text("❌ Фақат сон киритинг.")
+        return
     context.user_data["config_price"] = float(update.message.text)
+    context.user_data["action"] = "config_await_discount"
     await update.message.reply_text("Стандарт скидка фоизини киритинг (0-99):", reply_markup=back_keyboard())
 
 async def config_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.text.isdigit(): return
+    if not update.message.text.isdigit(): 
+        await update.message.reply_text("❌ Фақат сон киритинг.")
+        return
     disc = float(update.message.text)
     p_name = context.user_data.get("config_product")
     price = context.user_data.get("config_price")
     
     await update_product_details(p_name, price, disc)
-    await update.message.reply_text(f"✅ **{p_name}** нархи: {format_currency(price)} ({disc}% скидка) қилиб янгиланди.", reply_markup=main_menu_keyboard())
+    await update.message.reply_text(f"✅ **{p_name}** нархи: {format_currency(price)} ({disc}% скидка) қилиб янгиланди.", reply_markup=main_menu_keyboard(), parse_mode="Markdown")
     context.user_data.clear()
 
 async def pay_debt_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -329,28 +335,12 @@ async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     act = context.user_data.get("action")
     text = update.message.text.strip()
 
-    if act == "search_incoming_product":
+    if act in ["search_incoming_product", "search_sell_product", "config"]:
         if len(text) < 2:
             await update.message.reply_text("⚠️ Илтимос, камида 2-3 та ҳарф киритинг:")
             return
         keyboard = await search_product_inline_keyboard(text)
         await update.message.reply_text("🔍 Мос келувчи дорилар:", reply_markup=keyboard)
-        return
-
-    if act == "search_sell_product":
-        if len(text) < 2:
-            await update.message.reply_text("⚠️ Илтимос, камида 2-3 та ҳарф киритинг:")
-            return
-        keyboard = await search_product_inline_keyboard(text)
-        await update.message.reply_text("🔍 Мос келувчи дорилар:", reply_markup=keyboard)
-        return
-
-    if act == "config":
-        if len(text) < 2:
-            await update.message.reply_text("⚠️ Илтимос, камида 2-3 та ҳарф киритинг:")
-            return
-        keyboard = await search_product_inline_keyboard(text)
-        await update.message.reply_text("🔍 Созланадиган дорини танланг:", reply_markup=keyboard)
         return
 
 # Inline тугмаларни ушлаш
@@ -388,5 +378,5 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif act == "config" and query.data.startswith("prod_"):
         p = query.data.replace("prod_", "")
         context.user_data["config_product"] = p
-        context.user_data["action"] = "config"
-        await query.message.reply_text(f"🛠 **{p}** янги асосий нархини киритинг:", reply_markup=back_keyboard())
+        context.user_data["action"] = "config_await_price"
+        await query.message.reply_text(f"🛠 **{p}** янги асосий нархини киритинг:", reply_markup=back_keyboard(), parse_mode="Markdown")
