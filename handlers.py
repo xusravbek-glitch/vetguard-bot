@@ -6,7 +6,7 @@ from utils import *
 from config import LOW_STOCK_LIMIT
 
 # ==========================
-# START (Асосий меню)
+# START
 # ==========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context):
@@ -168,23 +168,30 @@ async def pay_debt_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
 # ==========================
-# 5. ДОРИ СОЗЛАШ
+# 5. ДОРИ СОЗЛАШ (ТУЗАТИЛДИ ва ТАКОМИЛЛАШТИРИЛДИ)
 # ==========================
 async def config_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "config"
     await update.message.reply_text("Дорини танланг:", reply_markup=await product_inline_keyboard())
 
+async def config_product_selected_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    product = query.data.replace("prod_", "")
+    context.user_data["config_product"] = product
+    await query.message.reply_text(f"🛠 {product} учун янги нархни киритинг (сўм):", reply_markup=back_keyboard())
+
 async def config_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.text.isdigit():
-        await update.message.reply_text("❌ Нархни сон киритинг.")
+        await update.message.reply_text("❌ Нархни сон киритинг.", reply_markup=back_keyboard())
         return
     context.user_data["config_price"] = int(update.message.text)
     await update.message.reply_text("Чегирма фоизини киритинг (0-99):", reply_markup=back_keyboard())
 
 async def config_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.text.isdigit():
-        await update.message.reply_text("❌ Фоизни сон киритинг.")
+        await update.message.reply_text("❌ Фоизни сон киритинг.", reply_markup=back_keyboard())
         return
     discount = int(update.message.text)
     if discount < 0 or discount > 99:
@@ -201,7 +208,7 @@ async def config_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
 # ==========================
-# 6. МИЖОЗЛАР (БУ ЕРДА АСОСИЙ ТУЗАТИШ КИРИТИЛДИ)
+# 6. МИЖОЗЛАР
 # ==========================
 async def customers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
@@ -271,7 +278,7 @@ async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 # ==========================
-# CALLBACK HANDLER (ТУГМА БОСИШЛАРНИ БОШҚАРИШ)
+# CALLBACK HANDLER (АСОСИЙ ТУГМА БОСИШЛАР)
 # ==========================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -283,24 +290,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     action = context.user_data.get("action")
     
-    # КЕЛИШ (Incoming)
     if action == "incoming":
         if query.data.startswith("prod_"):
             product = query.data.replace("prod_", "")
             context.user_data["incoming_product"] = product
             await query.message.reply_text(f"📥 {product} миқдорини киритинг:", reply_markup=back_keyboard())
             
-    # СОТИШ (Sell)
     elif action == "sell":
         if query.data.startswith("prod_"):
             context.user_data["sell_product"] = query.data.replace("prod_", "")
             await query.message.reply_text("👤 Мижозни танланг:", reply_markup=await customer_inline_keyboard())
-            
         elif query.data.startswith("cust_"):
             context.user_data["sell_customer"] = query.data.replace("cust_", "")
             await query.message.reply_text("Тўлов турини танланг:", reply_markup=payment_keyboard())
             
-    # ҚАРЗ ТЎЛАШ (Pay Debt)
     elif action == "pay_debt":
         if query.data.startswith("cust_"):
             customer = query.data.replace("cust_", "")
@@ -313,7 +316,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["pay_debt_customer"] = customer
             await query.message.reply_text(f"👤 {customer} қарзи: {format_currency(current_debt)}\nТўлайдиган суммани киритинг:", reply_markup=back_keyboard())
 
-    # ДОРИ СОЗЛАШ (Config)
     elif action == "config":
         if query.data.startswith("prod_"):
             product = query.data.replace("prod_", "")
