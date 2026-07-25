@@ -126,7 +126,6 @@ async def add_product_finish(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"✅ **{name}** базага қўшилди.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
     context.user_data.clear()
 
-# Омборга кирим қилиш
 async def incoming_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "search_incoming_product"
@@ -149,7 +148,6 @@ async def incoming_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ **{p_name}** омборга +{qty} шт қўшилди.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
     context.user_data.clear()
 
-# Сотув қилиш
 async def sell_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "search_sell_product"
@@ -209,7 +207,6 @@ async def sell_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     context.user_data.clear()
 
-# Дори нархи ва скидкасини созлаш
 async def config_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     context.user_data["action"] = "config"
@@ -290,13 +287,19 @@ async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
     logs = await get_sale_logs()
     if not logs:
-        await update.message.reply_text("📜 Сотувлар тарихи бўш.")
+        await update.message.reply_text("📜 Ҳозирча сотувлар тарихи бўш (сотув амалга оширилмаган).")
         return
+    
     text = "📜 **Сўнгги сотувлар тарихи:**\n\n"
     for l in logs:
         text += f"⏱ [{l.timestamp}]\n👤 {l.customer} | 📦 {l.product} x{l.quantity} шт\n🏷 Чегирма: {format_currency(l.discount_applied)} | 💵 Сумма: {format_currency(l.total)} ({l.payment_type})\n---\n"
-    if len(text) > 4000: text = text[:4000]
-    await update.message.reply_text(text)
+    
+    MAX_LENGTH = 4000
+    if len(text) <= MAX_LENGTH:
+        await update.message.reply_text(text, parse_mode="Markdown")
+    else:
+        for i in range(0, len(text), MAX_LENGTH):
+            await update.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
 
 async def customers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
@@ -330,7 +333,6 @@ async def list_customers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i in range(0, len(text), MAX_LENGTH):
             await update.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
 
-# Матн киритилганда қидирувни амалга оширувчи функция
 async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     act = context.user_data.get("action")
     text = update.message.text.strip()
@@ -343,7 +345,6 @@ async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("🔍 Мос келувчи дорилар:", reply_markup=keyboard)
         return
 
-# Inline тугмаларни ушлаш
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -354,32 +355,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     act = context.user_data.get("action")
     
-    # 1. Омборга кирим учун дори танланганда
     if act == "search_incoming_product" and query.data.startswith("prod_"):
         p = query.data.replace("prod_", "")
         context.user_data["incoming_product"] = p
         context.user_data["action"] = "incoming"
         await query.message.reply_text(f"📥 **{p}** неча дона келди (сонини киритинг)?", reply_markup=back_keyboard(), parse_mode="Markdown")
 
-    # 2. Сотув учун дори танланганда
     elif act == "search_sell_product" and query.data.startswith("prod_"):
         context.user_data["sell_product"] = query.data.replace("prod_", "")
         context.user_data["action"] = "sell_cust"
         await query.message.reply_text("👤 Мижозни танланг:", reply_markup=await customer_inline_keyboard())
 
-    # 3. Сотув учун мижоз танланганда
     elif act == "sell_cust" and query.data.startswith("cust_"):
         context.user_data["sell_customer"] = query.data.replace("cust_", "")
         context.user_data["action"] = "sell"
         await query.message.reply_text("🔢 Нечта сотилмоқда (сонини киритинг)?", reply_markup=back_keyboard())
 
-    # 4. Қарз тўлаш учун мижоз танланганда
     elif act == "pay_debt" and query.data.startswith("cust_"):
         c = query.data.replace("cust_", "")
         context.user_data["pay_debt_customer"] = c
         await query.message.reply_text(f"💵 **{c}** қанча сумма тўламоқда?", reply_markup=back_keyboard(), parse_mode="Markdown")
 
-    # 5. Дори нархини созлаш учун дори танланганда
     elif act == "config" and query.data.startswith("prod_"):
         p = query.data.replace("prod_", "")
         context.user_data["config_product"] = p
