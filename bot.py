@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 async def post_init(application: Application):
     await init_db()
-    logger.info("🚀 VETGUARD ERP v3.0 ишга тушди!")
+    logger.info("🚀 VETGUARD ERP v3.0 (Takomillashtirilgan) ишга тушди!")
 
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Барча текст киритишларни бошқаради (FSM)"""
@@ -40,6 +40,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "pay_debt":
         await pay_debt_finish(update, context)
     elif action == "config":
+        # config_price -> config_discount ketma-ketligi
         if context.user_data.get("config_price") is None:
             await config_price(update, context)
         else:
@@ -48,7 +49,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_customer_finish(update, context)
     
     # 3. Агар action топилмаса, демак бу асосий меню тугмаси
-    # Бу ерда барча меню тугмаларини текширамиз ва уларни ишга туширамиз!
     else:
         if text == "➕ Келди":
             await incoming_start(update, context)
@@ -71,7 +71,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "👤 Янги мижоз қўшиш":
             await add_customer_start(update, context)
         else:
-            # Агар ҳеч қандай менюга мос келмаса, "Номаълум команда" деб ёзади
             await update.message.reply_text("❌ Номаълум команда.", reply_markup=main_menu_keyboard())
 
 def main():
@@ -80,7 +79,6 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_callback))
     
-    # Барча меню тугмаларини ушлайдиган фильтр
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 
     if WEBHOOK_URL:
