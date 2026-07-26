@@ -28,12 +28,26 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         payment_type = "💳 Насия (Қарзга)" if ai_data.get("payment_type") in ["Насия", "Қарз"] else "💵 Нақд тўлов"
 
         if not product_name:
-            await update.message.reply_text("❌ AI дори номини аниқлай олмади.")
+            await update.message.reply_text("❌ AI дори номини аниқлай олмади. Илтимос, дори номини аниқроқ ёзиб юборинг.")
             return
 
         product = await get_product(product_name)
         if not product:
-            await update.message.reply_text(f"❌ Базада **{product_name}** топилмади.", parse_mode="Markdown")
+            # Агар базада бу номдаги дори топилмаса, бот фойдаланувчидан сўрайди ва яқин вариантларни ёки қўшиш таклифини беради
+            context.user_data["clarify_product"] = product_name
+            context.user_data["action"] = "clarify_product_missing"
+            
+            # Мавжуд дорилардан ўхшашини қидириб кўрамиз
+            all_prods = await get_all_products()
+            matching = [p.name for p in all_prods if product_name.lower() in p.name.lower() or p.name.lower() in product_name.lower()]
+            
+            msg = f"⚠️ Базада **'{product_name}'** номли дори топилмади.\n"
+            if matching:
+                msg += f"Балки қуйидагилардан бирини назарда тутгандирсиз?\n" + "\n".join([f"• {m}" for m in matching[:5]])
+            else:
+                msg += "Бу янги дорими ёки номини хато ёздингизми? Тўғри номини киритинг ёки 'Янги дори қўшиш' тугмасини босинг."
+                
+            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu_keyboard())
             return
 
         if product.quantity < quantity:
@@ -83,7 +97,7 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         p_name = ai_data.get("product_name")
         qty = ai_data.get("quantity") or 0
         if not p_name or qty <= 0:
-            await update.message.reply_text("❌ Кирим маълумоти аниқланмади.")
+            await update.message.reply_text("❌ Кирим маълумоти аниқланмади. Қайтадан киритинг.")
             return
 
         product = await get_product(p_name)
@@ -98,7 +112,7 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         c_name = ai_data.get("customer_name")
         amt = ai_data.get("amount") or 0
         if not c_name or amt <= 0:
-            await update.message.reply_text("❌ Қарз тўлови аниқланмади.")
+            await update.message.reply_text("❌ Қарз тўлови аниқланмади. Мижоз исми ва суммани текширинг.")
             return
 
         debt = await get_debt(c_name)
@@ -111,7 +125,7 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=main_menu_keyboard()
         )
     else:
-        await update.message.reply_text("❌ Амал аниқланмади. Текшириб қайтадан ёринг.")
+        await update.message.reply_text("❌ Амал тушунарсиз бўлди. Илтимос, буюртмани ёки амални аниқроқ ёзиб юборинг.")
 
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
@@ -423,7 +437,7 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     current_action = context.user_data.get("action")
-    if current_action in ["search_incoming_product", "search_sell_product", "config", "add_product", "incoming", "sell_cust", "sell", "config_await_price", "config_await_discount", "pay_debt", "add_customer"]:
+    if current_action in ["search_incoming_product", "search_sell_product", "config", "add_product", "incoming", "sell_cust", "sell", "config_await_price", "config_await_discount", "pay_debt", "add_customer", "clarify_product_missing"]:
         if current_action in ["search_incoming_product", "search_sell_product", "config"]:
             await handle_search_text(update, context)
             return
@@ -437,6 +451,12 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif "sell_discount" not in context.user_data:
                 await sell_discount(update, context)
                 return
+        elif current_action == "clarify_product_missing":
+            # Фойдаланувчи топилмаган дори ўрнига янги ном ёки тузатилган номни киритганда уни қабул қиламиз
+            fixed_name = update.message.text.strip()
+            context.user_data.clear()
+            await update.message.reply_text(f"✅ Дори номи қабул қилинди: **{fixed_name}**. Қайтадан буюртма беришингиз мумкин.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
+            return
 
     text = update.message.text or update.message.caption
     photo = update.message.photo
