@@ -29,7 +29,7 @@ async def init_db():
             name TEXT UNIQUE
         )
     """)
-    # Қарздорлар жадвали
+    # Қарздорлар жадвали (customer_name устунига мажбурий UNIQUE чеклови қўшилди)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS debts (
             id SERIAL PRIMARY KEY,
@@ -151,9 +151,10 @@ async def get_all_debts():
 async def update_debt(customer_name: str, amount: float):
     conn = get_connection()
     cursor = conn.cursor()
+    # PostgreSQL да таблица ўзгарганидан кейин бу сўров тўғри ишлайди
     cursor.execute("""
         INSERT INTO debts (customer_name, amount) VALUES (%s, %s)
-        ON CONFLICT(customer_name) DO UPDATE SET amount = %s
+        ON CONFLICT(customer_name) DO UPDATE SET amount = debts.amount + %s
     """, (customer_name, amount, amount))
     conn.commit()
     cursor.close()
@@ -184,9 +185,9 @@ async def get_sale_logs_by_period(days: int):
     cursor = conn.cursor()
     cursor.execute(
         f"""SELECT customer, product, quantity, price, discount_applied, total, payment_type, timestamp 
-           FROM sales 
-           WHERE timestamp >= NOW() - INTERVAL '{days} days'
-           ORDER BY id DESC"""
+            FROM sales 
+            WHERE timestamp >= NOW() - INTERVAL '{days} days'
+            ORDER BY id DESC"""
     )
     rows = cursor.fetchall()
     cursor.close()
