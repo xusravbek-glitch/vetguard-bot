@@ -111,7 +111,7 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=main_menu_keyboard()
         )
     else:
-        await update.message.reply_text("❌ Амал аниқланмади. Текшириб қайтадан ёзинг.")
+        await update.message.reply_text("❌ Амал аниқланмади. Текшириб қайтадан ёринг.")
 
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): return
@@ -356,7 +356,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # Сотувлар тарихи даврларини фильтрлаш тугмалари
     if query.data.startswith("logs_"):
         period = query.data.replace("logs_", "")
         
@@ -387,7 +386,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text(text, parse_mode="Markdown")
         else:
             for i in range(0, len(text), MAX_LENGTH):
-                await query.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
+                await update.message.reply_text(text[i:i + MAX_LENGTH], parse_mode="Markdown")
         return
 
     act = context.user_data.get("action")
@@ -418,48 +417,54 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["config_product"] = p
         context.user_data["action"] = "config_await_price"
         await query.message.reply_text(f"🛠 **{p}** янги асосий нархини киритинг:", reply_markup=back_keyboard(), parse_mode="Markdown")
+
 async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update, context): 
         return
     
-    # Агар фойдаланувчи бирор тугмани босиб, махсус амал бажараётган бўлса (масалан, сонини ёки номини ёзаётган бўлса), AI уни ушлаб олмаслиги керак
     current_action = context.user_data.get("action")
     if current_action in ["search_incoming_product", "search_sell_product", "config", "add_product", "incoming", "sell_cust", "sell", "config_await_price", "config_await_discount", "pay_debt", "add_customer"]:
-        # Бу оддий қадамли меню учун, уни ўз функцияси бажариши мумкин
-        if current_action == "search_incoming_product" or current_action == "search_sell_product" or current_action == "config":
+        if current_action in ["search_incoming_product", "search_sell_product", "config"]:
             await handle_search_text(update, context)
             return
         elif current_action == "incoming":
             await incoming_quantity(update, context)
             return
         elif current_action == "sell":
-            # Бу ерда агар оддий сон ёки тўлов кутилаётган бўлса
             if "sell_quantity" not in context.user_data:
                 await sell_quantity(update, context)
                 return
             elif "sell_discount" not in context.user_data:
                 await sell_discount(update, context)
                 return
-        # Бошқа ҳолатларда оддий матнли хабар келди деб ҳисоблаймиз
-    
-    text = update.message.text
-    if not text:
+
+    # Расм ёки матнни аниқлаб олиш (Расм юборилганда расм бириктирилган файл тагидаги матнни ёки расмни ўзини AI га узатиш)
+    text = update.message.text or update.message.caption
+    photo = update.message.photo
+
+    if not text and not photo:
         return
 
-    # Фойдаланувчига AI ўйлаётганини билдириш учун
     processing_msg = await update.message.reply_text("🤖 Уйлаяпман ва ҳисоб-китоб қиляпман...")
 
     try:
-        # AI сервижидан таҳлилни оламиз
-        from ai_service import process_text_with_ai
-        ai_data = await process_text_with_ai(text)
+        from ai_service import process_text_with_ai, process_photo_with_ai
         
-        # Хабарни ўчириб ташлаймиз ёки янгилаймиз
+        if photo:
+            # Энг юқори сифатли расм файлини оламиз
+            photo_file = await context.bot.get_file(photo[-1].file_id)
+            photo_bytes = await photo_file.download_as_bytearray()
+            ai_data = await process_photo_with_ai(bytes(photo_bytes), text or "")
+        else:
+            ai_data = await process_text_with_ai(text)
+        
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg.message_id)
-        
-        # Амалларни бажарувчи функцияга узатамиз
         await process_ai_action(update, context, ai_data)
         
     except Exception as e:
         logger.error(f"AI Message Error: {e}")
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg.message_id)
+        except:
+            pass
         await update.message.reply_text("❌ Хатони қайтаришда муаммо юз берди.")
