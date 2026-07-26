@@ -59,7 +59,7 @@ async def process_text_with_ai(text: str) -> dict:
         logger.error(f"Gemini Text Exception: {e}")
         return {"action": "unknown"}
 
-async def process_image_with_ai(image_bytes: bytearray) -> dict:
+async def process_image_with_ai(image_bytes: bytes, prompt_text: str = "") -> dict:
     if not GEMINI_API_KEY:
         return {"action": "unknown"}
 
@@ -74,10 +74,11 @@ async def process_image_with_ai(image_bytes: bytearray) -> dict:
             "data": image_bytes
         }
         
-        response = await model.generate_content_async([
-            image_part,
-            "Ушбу ҳужжат, чек ёки қўлёзма суратини таҳлил қилиб, белгиланган форматда JSON қайтаринг."
-        ])
+        user_input = [image_part, "Ушбу ҳужжат, чек ёки қўлёзма суратини таҳлил қилиб, белгиланган форматда JSON қайтаринг."]
+        if prompt_text:
+            user_input.append(f"Қўшимча изоҳ: {prompt_text}")
+        
+        response = await model.generate_content_async(user_input)
         
         res_text = response.text.strip()
         if res_text.startswith("```json"):
