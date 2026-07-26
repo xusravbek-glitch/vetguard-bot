@@ -1,84 +1,91 @@
 import json
 import logging
 import google.generativeai as genai
-from config import GEMINI_API_KEY # config.py файлингиздан API калитни олади
+from config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
 
-# Gemini API ни созлаш
-genai.configure(api_key=GEMINI_API_KEY)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
-# Моделни танлаш - энг тезкор ва арзон модел (Flash)
 MODEL_NAME = 'gemini-1.5-flash'
 
-# AI учун бошланғич кўрсатма (Ботингиз қандай ишлашини AI га тушунтирамиз)
-# БУ ЕРДАГИ JSON ФОРМАТНИ ЎЗИНГИЗНИНГ process_ai_action ФУНКЦИЯНГИЗГА МОСЛАБ ОЛАСИЗ
-SYSTEM_INSTRUCTION = """
-Сиз ветеринария ва қишлоқ хўжалиги маҳсулотлари савдоси билан шуғулланувчи омбор ботининг ақлли ёрдамчисисиз.
-Фойдаланувчининг матнини ёки расмини таҳлил қилиб, АЛБАТТА JSON форматда жавоб қайтаринг.
-Жавобингиз фақат JSON бўлсин, бошқа ҳеч қандай сўз қўшманг.
+SYSTEM_PROMPT = """
+Сиз ветеринария аптекаси ва омбори учун AI ERP ёрдамчисисиз.
+Фойдаланувчи юборган эркин матн ёки расмдан (чек, қўлёзма қоғозлар, масалан "Шахбоз Карши Доксилокс 50 дона") амални аниқлаб, фақат ва фақат JSON форматида қайтаринг. Ҳеч қандай қўшимча матн ёзманг.
 
-Кутиладиган JSON форматлари:
-- Сотув учун: {"action": "sell", "product": "дори номи", "quantity": 1, "customer": "исм", "type": "насия/нақд"}
-- Кирим учун: {"action": "incoming", "product": "дори номи", "quantity": 10}
-- Бошқа ҳолат: {"action": "unknown"}
+МУҲИМ ҚОИДА: Агар матнда ёки расмда мижоз/ҳудуд, дори номи ва сони аниқ ёзилган бўлса, уни автоматик равишда "sell" (сотув) деб қабул қилинг.
+
+Операция турлари (action):
+1. "sell" - Сотиш (Чегирма бўлиши мумкин)
+2. "incoming" - Омборга кирим/келди
+3. "pay_debt" - Қарзни тўлаш
+4. "add_product" - Янги дори қўшиш
+5. "add_customer" - Янги мижоз қўшиш
+6. "unknown" - Тушунарсиз бўлса.
+
+JSON структураси:
+{
+  "action": "sell" | "incoming" | "pay_debt" | "add_product" | "add_customer" | "unknown",
+  "product_name": "дори номи" ёки null,
+  "customer_name": "мижоз исми ёки ҳудуд" ёки null,
+  "quantity": сон ёки null,
+  "discount_percent": чегирма фоизи (сон, масалан 10) ёки 0,
+  "discount_amount": чегирма суммаси (сон) ёки 0,
+  "amount": қарз тўлови ёки умумий сумма (сон) ёки null,
+  "payment_type": "Нақд" | "Насия" (стандарт: "Нақд")
+}
 """
 
 async def process_text_with_ai(text: str) -> dict:
-    """Матнли хабарларни AI орқали таҳлил қилиш"""
+    if not GEMINI_API_KEY:
+        return {"action": "unknown"}
+
     try:
-        # Моделни чақириш
         model = genai.GenerativeModel(
             model_name=MODEL_NAME,
-            system_instruction=SYSTEM_INSTRUCTION
+            system_instruction=SYSTEM_PROMPT
         )
-        
-        # AI дан жавоб олиш
         response = await model.generate_content_async(text)
-        result_text = response.text.strip()
         
-        # Markdown (```json) белгиларини тозалаш
-        if result_text.startswith("```json"):
-            result_text = result_text[7:-3].strip()
-        elif result_text.startswith("```"):
-            result_text = result_text[3:-3].strip()
+        res_text = response.text.strip()
+        if res_text.startswith("```json"):
+            res_text = res_text[7:]
+        if res_text.endswith("```"):
+            res_text = res_text[:-3]
             
-        # JSON матнни Python луғатига (dict) ўгириш
-        return json.loads(result_text)
-        
+        return json.loads(res_text.strip())
     except Exception as e:
-        logger.error(f"AI Матнни ўқишда хатолик: {e}")
-        # Хатолик бўлса, бот қотиб қолмаслиги учун бўш амал қайтарамиз
-        return {"action": "error", "message": str(e)}
+        logger.error(f"Gemini Text Exception: {e}")
+        return {"action": "unknown"}
 
 async def process_image_with_ai(image_bytes: bytearray) -> dict:
-    """Расмларни AI орқали таҳлил қилиш"""
+    if not GEMINI_API_KEY:
+        return {"action": "unknown"}
+
     try:
         model = genai.GenerativeModel(
             model_name=MODEL_NAME,
-            system_instruction=SYSTEM_INSTRUCTION
+            system_instruction=SYSTEM_PROMPT
         )
         
-        # Расмни тайёрлаш
         image_part = {
             "mime_type": "image/jpeg",
             "data": image_bytes
         }
         
-        prompt = "Ушбу расмдаги маълумотларни (дори номи, сони, мижоз) ўқиб, омбор амалини аниқланг ва юқоридаги қоидага асосан JSON қайтаринг."
+        response = await model.generate_content_async([
+            image_part,
+            "Ушбу ҳужжат, чек ёки қўлёзма суратини таҳлил қилиб, белгиланган форматда JSON қайтаринг."
+        ])
         
-        # AI га расм ва сўровни юбориш
-        response = await model.generate_content_async([prompt, image_part])
-        result_text = response.text.strip()
-        
-        # Markdown (```json) белгиларини тозалаш
-        if result_text.startswith("```json"):
-            result_text = result_text[7:-3].strip()
-        elif result_text.startswith("```"):
-            result_text = result_text[3:-3].strip()
+        res_text = response.text.strip()
+        if res_text.startswith("```json"):
+            res_text = res_text[7:]
+        if res_text.endswith("```"):
+            res_text = res_text[:-3]
             
-        return json.loads(result_text)
-        
+        return json.loads(res_text.strip())
     except Exception as e:
-        logger.error(f"AI Расмни ўқишда хатолик: {e}")
-        return {"action": "error", "message": str(e)}
+        logger.error(f"Gemini Image Exception: {e}")
+        return {"action": "unknown"}
