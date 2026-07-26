@@ -438,7 +438,6 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await sell_discount(update, context)
                 return
 
-    # Расм ёки матнни аниқлаб олиш (Расм юборилганда расм бириктирилган файл тагидаги матнни ёки расмни ўзини AI га узатиш)
     text = update.message.text or update.message.caption
     photo = update.message.photo
 
@@ -448,13 +447,12 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     processing_msg = await update.message.reply_text("🤖 Уйлаяпман ва ҳисоб-китоб қиляпман...")
 
     try:
-        from ai_service import process_text_with_ai, process_photo_with_ai
+        from ai_service import process_text_with_ai, process_image_with_ai
         
         if photo:
-            # Энг юқори сифатли расм файлини оламиз
             photo_file = await context.bot.get_file(photo[-1].file_id)
             photo_bytes = await photo_file.download_as_bytearray()
-            ai_data = await process_photo_with_ai(bytes(photo_bytes), text or "")
+            ai_data = await process_image_with_ai(bytes(photo_bytes), text or "")
         else:
             ai_data = await process_text_with_ai(text)
         
