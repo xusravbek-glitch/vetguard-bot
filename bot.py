@@ -99,12 +99,10 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_logs(update, context)
         return
 
-    # Дори қидириш ҳолатлари
     if action in ["search_incoming_product", "search_sell_product", "config"]:
         await handle_search_text(update, context)
         return
 
-    # Бошқа FSM ҳолатлари
     elif action == "add_product":
         await add_product_finish(update, context)
     elif action == "incoming":
@@ -125,17 +123,15 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "add_customer":
         await add_customer_finish(update, context)
 
-    # Эркин матнлар -> AI таҳлил
     else:
         status_msg = await update.message.reply_text("🤖 *AI таҳлил қилмоқда...*", parse_mode="Markdown")
         try:
             ai_data = await process_text_with_ai(text)
-            # Маълумот тўғри келганини текшириш учун логга ёзамиз
             logger.info(f"AI Response Data: {ai_data}")
             await process_ai_action(update, context, ai_data)
         except Exception as e:
             logger.error(f"AI Text Error: {e}")
-            await update.message.reply_text(f"❌ Маълумотни қайта ишлашда хатолик бўлди: {e}")
+            await update.message.reply_text(f"❌ Хатолик юз берди: {e}")
         finally:
             try:
                 await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=status_msg.message_id)
@@ -147,7 +143,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 Бу ботдан фойдаланиш учун сизга рухсат берилмаган.")
         return
 
-    # Расм келганда FSM ҳолатини тозалаймиз, токи қидирув ёки бошқа амалда қолиб кетмасин
     context.user_data.clear()
 
     status_msg = await update.message.reply_text("📸 *AI расмни ўқиб таҳлил қилмоқда...*", parse_mode="Markdown")
