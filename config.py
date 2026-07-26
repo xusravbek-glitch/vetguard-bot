@@ -8,6 +8,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
+# Қолдиғи кам қолган товарлар учун лимит (Хатолик чиқмаслиги учун қўшилди)
+LOW_STOCK_LIMIT = int(os.getenv("LOW_STOCK_LIMIT", 5))
+
 admin_ids_str = os.getenv("ADMIN_IDS", "")
 try:
     ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(",") if admin_id.strip()]
