@@ -18,7 +18,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, ai_data: dict):
+async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, ai_data):
+    # Агар AI рўйхат қайтарса (масалан, накладнойдаги бир нечта товар)
+    if isinstance(ai_data, list):
+        for item in ai_data:
+            if isinstance(item, dict):
+                await execute_single_ai_action(update, context, item)
+        return
+    
+    # Агар битта амал бўлса
+    if isinstance(ai_data, dict):
+        await execute_single_ai_action(update, context, ai_data)
+    else:
+        await update.message.reply_text("❌ Амал тушунарсиз бўлди. Илтимос, буюртмани ёки амални аниқроқ ёзиб юборинг.")
+
+async def execute_single_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, ai_data: dict):
     action = ai_data.get("action")
     
     if action == "sell":
@@ -33,11 +47,9 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
         product = await get_product(product_name)
         if not product:
-            # Агар базада бу номдаги дори топилмаса, бот фойдаланувчидан сўрайди ва яқин вариантларни ёки қўшиш таклифини беради
             context.user_data["clarify_product"] = product_name
             context.user_data["action"] = "clarify_product_missing"
             
-            # Мавжуд дорилардан ўхшашини қидириб кўрамиз
             all_prods = await get_all_products()
             matching = [p.name for p in all_prods if product_name.lower() in p.name.lower() or p.name.lower() in product_name.lower()]
             
@@ -45,13 +57,13 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             if matching:
                 msg += f"Балки қуйидагилардан бирини назарда тутгандирсиз?\n" + "\n".join([f"• {m}" for m in matching[:5]])
             else:
-                msg += "Бу янги дорими ёки номини хато ёздингизми? Тўғри номини киритинг ёки 'Янги дори қўшиш' тугмасини босинг."
+                msg += "Бу янги дорими ёки номини хато ёздингизми? Тўғри номини киритинг."
                 
             await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu_keyboard())
             return
 
         if product.quantity < quantity:
-            await update.message.reply_text(f"❌ Омборда етарли маҳсулот йўқ. Ҳозирча: {product.quantity} шт.")
+            await update.message.reply_text(f"❌ '{product.name}' учун омборда етарли маҳсулот йўқ. Ҳозирча: {product.quantity} шт.")
             return
 
         orig_price = product.price
@@ -86,7 +98,7 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             f"👤 Мижоз: **{customer_name}**\n"
             f"🔢 Сон: {quantity} шт\n"
             f"💰 Асл нархи: {format_currency(subtotal)}\n"
-            f"🏷 Берилган чегирма: {format_currency(total_discount)}\n"
+            f"🏷 Чегирма: {format_currency(total_discount)}\n"
             f"💵 Якуний сумма: **{format_currency(final_total)}**\n"
             f"💳 Тўлов: {payment_type}\n"
             f"📉 Омбор қолдиғи: {new_qty} шт"
@@ -97,7 +109,7 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         p_name = ai_data.get("product_name")
         qty = ai_data.get("quantity") or 0
         if not p_name or qty <= 0:
-            await update.message.reply_text("❌ Кирим маълумоти аниқланмади. Қайтадан киритинг.")
+            await update.message.reply_text("❌ Кирим маълумоти аниқланмади.")
             return
 
         product = await get_product(p_name)
@@ -112,7 +124,7 @@ async def process_ai_action(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         c_name = ai_data.get("customer_name")
         amt = ai_data.get("amount") or 0
         if not c_name or amt <= 0:
-            await update.message.reply_text("❌ Қарз тўлови аниқланмади. Мижоз исми ва суммани текширинг.")
+            await update.message.reply_text("❌ Қарз тўлови аниқланмади.")
             return
 
         debt = await get_debt(c_name)
@@ -452,7 +464,6 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await sell_discount(update, context)
                 return
         elif current_action == "clarify_product_missing":
-            # Фойдаланувчи топилмаган дори ўрнига янги ном ёки тузатилган номни киритганда уни қабул қиламиз
             fixed_name = update.message.text.strip()
             context.user_data.clear()
             await update.message.reply_text(f"✅ Дори номи қабул қилинди: **{fixed_name}**. Қайтадан буюртма беришингиз мумкин.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
@@ -464,7 +475,7 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text and not photo:
         return
 
-    processing_msg = await update.message.reply_text("🤖 Уйлаяпман ва ҳисоб-китоб қиляпман...")
+    processing_msg = await update.message.reply_text("🤖 Маълумот таҳлил қилинмоқда, ҳисоб-китоб бажарилмоқда...")
 
     try:
         from ai_service import process_text_with_ai, process_image_with_ai
@@ -472,11 +483,15 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if photo:
             photo_file = await context.bot.get_file(photo[-1].file_id)
             photo_bytes = await photo_file.download_as_bytearray()
-            ai_data = await process_image_with_ai(bytes(photo_bytes), text or "")
+            ai_data = await process_image_with_ai(bytes(photo_bytes), text or "Накладной бўйича амал")
         else:
             ai_data = await process_text_with_ai(text)
         
-        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg.message_id)
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg.message_id)
+        except:
+            pass
+
         await process_ai_action(update, context, ai_data)
         
     except Exception as e:
@@ -485,4 +500,4 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg.message_id)
         except:
             pass
-        await update.message.reply_text("❌ Хатони қайтаришда муаммо юз берди.")
+        await update.message.reply_text(f"❌ AI билан боғлиқ хатолик юз берди: {e}")
