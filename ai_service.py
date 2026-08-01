@@ -1,17 +1,18 @@
 import json
 import logging
-import google.generativeai as genai
 import io
 from PIL import Image
+from google import genai
+from google.genai import types
 from config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# Янги кутубхона учун мижозни (client) асосий sozlash
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# Тўғри ва энг тезкор модель номи кўрсатилди
-MODEL_NAME = 'gemini-1.5-flash' 
+# Энг барқарор ва тезкор модел номи
+MODEL_NAME = 'gemini-2.5-flash'
 
 SYSTEM_PROMPT = """
 Сиз ветеринария аптекаси ва омбори учун жуда ақлли AI ERP ёрдамчисисиз.
@@ -46,7 +47,6 @@ def extract_json_data(text: str) -> list:
         start = text.find('[')
         end = text.rfind(']') + 1
         
-        # Агар AI барибир битта объект {} қайтарган бўлса
         if start == -1 or end == 0:
             start = text.find('{')
             end = text.rfind('}') + 1
@@ -56,7 +56,6 @@ def extract_json_data(text: str) -> list:
             
         data = json.loads(text)
         
-        # Қолган кодлар хато бермаслиги учун доимо рўйхат (list) қайтарамиз
         if isinstance(data, dict):
             return [data]
         return data if isinstance(data, list) else [{"action": "unknown"}]
@@ -66,32 +65,40 @@ def extract_json_data(text: str) -> list:
         return [{"action": "unknown"}]
 
 async def process_text_with_ai(text: str) -> list:
-    if not GEMINI_API_KEY:
+    if not client:
         return [{"action": "unknown"}]
 
     try:
-        model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SYSTEM_PROMPT)
-        response = await model.generate_content_async(text)
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=text,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT
+            )
+        )
         return extract_json_data(response.text)
     except Exception as e:
         logger.error(f"Gemini Text Exception: {e}")
         return [{"action": "unknown"}]
 
 async def process_image_with_ai(image_bytes: bytes, prompt_text: str = "") -> list:
-    if not GEMINI_API_KEY:
+    if not client:
         return [{"action": "unknown"}]
 
     try:
-        model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SYSTEM_PROMPT)
-        
-        # Расмни барқарор ўқиш учун PIL кутубхонаси ишлатилди
         image = Image.open(io.BytesIO(image_bytes))
         
         user_input = [image, "Ушбу ҳужжат ёки накладной суратини таҳлил қилиб, барча товарлар учун белгиланган форматда JSON массив қайтаринг."]
         if prompt_text:
             user_input.append(f"Қўшимча изоҳ: {prompt_text}")
         
-        response = await model.generate_content_async(user_input)
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=user_input,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT
+            )
+        )
         return extract_json_data(response.text)
     except Exception as e:
         logger.error(f"Gemini Image Exception: {e}")
